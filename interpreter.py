@@ -44,7 +44,7 @@ PARAMETERS:
 RULES:
 - "best", "top", "highest return", "winners", "best performing" → top_n_prior_return
 - "worst", "bottom", "losers", "contrarian", "underperformers" → bottom_n_prior_return
-- "biggest", "largest", "market cap", "most valuable" → top_n_market_cap
+- "biggest", "largest", "market cap", "market caps", "most valuable", "largest companies", "biggest companies", "by market cap", "by size" → top_n_market_cap
 - "momentum", "trending", "hot", "breakout" → top_n_momentum
 - "hold X", "buy X", "invest in X", "just X" (specific company/ticker) → hold_ticker
 - "S&P 500 index", "just SPY", "index fund" → equal_weight_sp500
@@ -198,7 +198,7 @@ def _rule_based(scenario: str, initial_capital: float, start_year: int) -> dict:
         config["selection_method"] = "equal_weight_nasdaq"
     elif re.search(r'\b(worst|bottom|loser|losing|losers|loss|losses|contrarian|fallen|fell|dropped|declined|underperform|mean.?revert|bad|poor|laggard|laggards|dog|dogs)\b', text):
         config["selection_method"] = "bottom_n_prior_return"
-    elif re.search(r'\b(market.?cap|largest|biggest|most valuable|mega.?cap)\b', text):
+    elif re.search(r'\b(market.?caps?|largest|biggest|most valuable|mega.?cap)\b', text):
         config["selection_method"] = "top_n_market_cap"
     elif re.search(r'\b(momentum|trending|hot|breakout|relative strength)\b', text):
         config["selection_method"] = "top_n_momentum"

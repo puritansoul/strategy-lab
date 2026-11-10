@@ -148,7 +148,7 @@ if run_clicked and scenario_input.strip():
             st.error(f"Could not interpret scenario: {e}")
             st.stop()
         if config.get("_interpreter") == "rule-based":
-            st.caption("⚠️ Using rule-based interpreter — add a free Groq key for better accuracy.")
+            st.caption("⚠️ Using rule-based interpreter — add a free Gemini key for better accuracy.")
 
     # If market cap strategy and shares not cached yet, download now
     if config.get("selection_method") == "top_n_market_cap" and not dm.shares_loaded():
@@ -303,7 +303,7 @@ if run_clicked and scenario_input.strip():
     st.markdown(html_table, unsafe_allow_html=True)
 
     # -- Strategy config debug (expander) --
-    with st.expander("Strategy config (what Claude interpreted)"):
+    with st.expander("Strategy config (what the AI interpreted)"):
         st.json(config)
 
 elif run_clicked:

@@ -175,9 +175,10 @@ def _render_strategy_explanation(config: dict, result: dict, dm) -> None:
     if rows_for_desc:
         _f = rows_for_desc[0]
         _bd = _f.get("buy_date") or (pd.Timestamp(f"{_f['year']}-01-01") + pd.DateOffset(months=offset))
-        _sd = _f.get("sell_date") or pd.Timestamp(f"{_f['year']}-12-31")
-        buy_timing = f"around {_bd.strftime('%B %d')} each {freq.rstrip('ly') if freq != 'monthly' else 'month'}"
-        sell_timing = f"around {_sd.strftime('%B %d')} (hold ~{int(round((_sd - _bd).days / 30))} months)"
+        _sd = _f.get("sell_date") or (pd.Timestamp(f"{_f['year']+1}-01-01") + pd.DateOffset(months=offset) - pd.Timedelta(days=1))
+        _hold_months = int(round((_sd - _bd).days / 30))
+        buy_timing = f"around {_bd.strftime('%B %d')} each year"
+        sell_timing = f"around {_sd.strftime('%B %d')} next year (hold ~{_hold_months} months)"
     else:
         buy_timing = "start of each period"
         sell_timing = "end of each period"

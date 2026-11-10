@@ -339,7 +339,8 @@ def _generate_periods(
             buy = pd.Timestamp(f"{year}-01-01") + pd.DateOffset(months=buy_offset_months)
             if buy > _MAX_DATE:
                 break
-            sell = min(pd.Timestamp(f"{year}-12-31"), _MAX_DATE)
+            next_buy = pd.Timestamp(f"{year + 1}-01-01") + pd.DateOffset(months=buy_offset_months)
+            sell = min(next_buy - pd.Timedelta(days=1), _MAX_DATE)
             periods.append({"buy": buy, "sell": sell, "year": year})
 
     elif frequency == "quarterly":

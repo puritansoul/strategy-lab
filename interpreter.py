@@ -372,8 +372,8 @@ def _rule_based(scenario: str, initial_capital: float, start_year: int) -> dict:
     jan_effect = (offset == 1 and lb == 1)
     q1_effect = (offset == 3 and lb == 3 and freq == "annual")
     _labels = {
-        "top_n_prior_return":    (f"Top {n} January winners (buy Feb)" if jan_effect
-                                  else f"Top {n} Q1 winners (buy Apr, hold 3Q)" if q1_effect
+        "top_n_prior_return":    (f"Top {n} January winners (buy Feb, hold 12mo)" if jan_effect
+                                  else f"Top {n} Q1 winners (buy Apr, hold 12mo)" if q1_effect
                                   else f"Top {n} prior-{lb}mo winner{'s' if n>1 else ''} ({freq_label})"),
         "bottom_n_prior_return": f"Bottom {n} prior-{lb}mo loser{'s' if n>1 else ''} ({freq_label})",
         "top_n_momentum":        f"Top {n} momentum stock{'s' if n>1 else ''} ({lb}m, {freq_label})",

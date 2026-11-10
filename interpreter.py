@@ -111,7 +111,7 @@ def _call_openrouter(scenario: str, initial_capital: float, start_year: int) -> 
         "X-Title": "Strategy Lab",
     }
     models = _get_free_models(key)
-    last_err = None
+    errors = []
     for model in models:
         try:
             r = _req.post(
@@ -124,27 +124,29 @@ def _call_openrouter(scenario: str, initial_capital: float, start_year: int) -> 
                         {"role": "user", "content": user_msg},
                     ],
                     "temperature": 0,
-                    "max_tokens": 300,
+                    "max_tokens": 400,
+                    "response_format": {"type": "json_object"},
                 },
-                timeout=20,
+                timeout=25,
             )
             if not r.ok:
-                last_err = Exception(f"{r.status_code} from {model}: {r.text[:200]}")
+                errors.append(f"{model}: HTTP {r.status_code}")
                 continue
             try:
                 raw = r.json()["choices"][0]["message"]["content"]
             except (KeyError, IndexError, TypeError):
-                last_err = Exception(f"Unexpected response structure from {model}: {r.text[:100]}")
+                errors.append(f"{model}: malformed response")
                 continue
             if not raw or not isinstance(raw, str):
-                last_err = Exception(f"Empty/null content from {model}")
+                errors.append(f"{model}: empty content")
                 continue
             raw = re.sub(r"```(?:json)?", "", raw.strip()).strip("`").strip()
             return json.loads(raw)
+        except json.JSONDecodeError as e:
+            errors.append(f"{model}: bad JSON ({e})")
         except Exception as e:
-            last_err = e
-            continue
-    raise last_err
+            errors.append(f"{model}: {e}")
+    raise Exception("All models failed — " + "; ".join(errors[:4]))
 
 
 def _call_groq(scenario: str, initial_capital: float, start_year: int) -> dict:

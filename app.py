@@ -47,18 +47,26 @@ with st.sidebar:
     st.divider()
 
     import os as _os
-    if _os.environ.get("OPENROUTER_API_KEY"):
-        st.success("🤖 AI interpreter active (free)")
-    elif _os.environ.get("GROQ_API_KEY"):
-        st.success("🤖 Groq AI interpreter active (free)")
-    elif _os.environ.get("ANTHROPIC_API_KEY"):
-        st.info("🤖 Claude interpreter active")
+    _has_or = bool(_os.environ.get("OPENROUTER_API_KEY"))
+    _has_groq = bool(_os.environ.get("GROQ_API_KEY"))
+    _has_claude = bool(_os.environ.get("ANTHROPIC_API_KEY"))
+    if _has_or or _has_groq or _has_claude:
+        keys_active = []
+        if _has_or: keys_active.append("OpenRouter")
+        if _has_groq: keys_active.append("Groq")
+        if _has_claude: keys_active.append("Claude")
+        st.success(f"🤖 AI interpreter active ({', '.join(keys_active)})")
     else:
-        st.warning("🔤 Rule-based interpreter (limited)")
+        st.warning("🔤 Rule-based interpreter only")
         with st.expander("Enable free AI interpreter"):
             st.markdown(
-                "**OpenRouter (free)**\n\n"
-                "1. Go to **openrouter.ai** → Sign up (any email)\n"
+                "**Groq (recommended — fast & free)**\n\n"
+                "1. Go to **console.groq.com** → Sign up free\n"
+                "2. API Keys → Create Key\n"
+                "3. Add to Streamlit secrets:\n"
+                "```\nGROQ_API_KEY = 'gsk_...'\n```\n\n"
+                "**OpenRouter (also free)**\n\n"
+                "1. Go to **openrouter.ai** → Sign up\n"
                 "2. Keys → Create Key\n"
                 "3. Add to Streamlit secrets:\n"
                 "```\nOPENROUTER_API_KEY = 'sk-or-...'\n```"

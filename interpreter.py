@@ -86,23 +86,29 @@ def _get_free_models(key: str) -> list:
         )
         if r.ok:
             all_models = r.json().get("data", [])
-            # only exclude clearly non-chat models
-            _skip = ("embed", "rerank")
-            free = [
-                m["id"] for m in all_models
-                if m["id"].endswith(":free")
-                and not any(s in m["id"].lower() for s in _skip)
+            available = {m["id"] for m in all_models if m["id"].endswith(":free")}
+
+            # Preferred order: largest/most capable instruction models first
+            # Skip vision-only and tiny (<3B) models
+            _priority = [
+                "nvidia/nemotron-3-ultra-550b-a55b:free",
+                "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+                "google/gemma-4-31b-it:free",
+                "google/gemma-4-26b-a4b-it:free",
+                "nvidia/nemotron-3.5-lightning:free",
+                "xingchen-agi/xing4.0-29b-a4b:free",
+                "cohere/north-mini-code:free",
             ]
-            # prefer larger instruction-following models
-            def _rank(mid):
-                m = mid.lower()
-                return (
-                    "llama" not in m and "qwen" not in m and "mistral" not in m and "deepseek" not in m,
-                    "70b" not in m and "72b" not in m and "32b" not in m and "8b" not in m,
-                    m,
-                )
-            ranked = sorted(free, key=_rank)
-            _openrouter_free_models_cache = ranked[:12]
+            _skip_any = ("vl", "embed", "rerank", "1.7b", "2.6b", "note")
+            ordered = [m for m in _priority if m in available]
+            # append any new free models not in our priority list
+            extras = [
+                m for m in available
+                if m not in _priority
+                and not any(s in m.lower() for s in _skip_any)
+            ]
+            ordered.extend(sorted(extras))
+            _openrouter_free_models_cache = ordered[:10]
             return _openrouter_free_models_cache
     except Exception:
         pass

@@ -148,6 +148,108 @@ run_clicked = manual_run or auto_run
 # Backtest execution
 # ---------------------------------------------------------------------------
 
+def _render_strategy_explanation(config: dict, result: dict, dm) -> None:
+    import pandas as pd
+
+    method = config.get("selection_method", "top_n_prior_return")
+    n = config.get("n", 1)
+    freq = config.get("rebalance_frequency", "annual")
+    lb = config.get("selection_lookback_months", 12)
+    offset = config.get("buy_offset_months", 0)
+    tickers_cfg = config.get("tickers", [])
+
+    _method_labels = {
+        "top_n_prior_return":    f"top {n} stock{'s' if n>1 else ''} by return over the lookback window",
+        "bottom_n_prior_return": f"bottom {n} stock{'s' if n>1 else ''} by return (contrarian — worst performers)",
+        "top_n_momentum":        f"top {n} stock{'s' if n>1 else ''} by momentum",
+        "bottom_n_momentum":     f"bottom {n} stock{'s' if n>1 else ''} by momentum",
+        "top_n_market_cap":      f"top {n} stock{'s' if n>1 else ''} by market cap (largest companies)",
+        "hold_ticker":           f"always hold {', '.join(tickers_cfg)} — no selection needed",
+        "equal_weight_sp500":    "SPY (S&P 500 index fund) — no selection needed",
+        "equal_weight_nasdaq":   "QQQ (Nasdaq 100 index fund) — no selection needed",
+    }
+    _freq_labels = {"annual": "once per year", "quarterly": "every quarter", "monthly": "every month"}
+
+    # Buy/sell timing description
+    if offset == 0:
+        buy_timing = "on January 1 each year"
+        sell_timing = "on December 31 (hold full year)"
+    else:
+        from pandas.tseries.offsets import DateOffset
+        example_buy = pd.Timestamp("2001-01-01") + DateOffset(months=offset)
+        buy_timing = f"on {example_buy.strftime('%B 1')} each year (after {offset}-month delay)"
+        sell_timing = "on December 31 (hold remaining year)"
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("**Strategy parameters**")
+        st.markdown(f"""
+| Field | Value |
+|---|---|
+| Universe | S&P 500 members at time of purchase |
+| Select | {_method_labels.get(method, method)} |
+| Lookback | {lb} month{'s' if lb != 1 else ''} before buy date |
+| Buy | {buy_timing} |
+| Sell | {sell_timing} |
+| Rebalance | {_freq_labels.get(freq, freq)} |
+| Position sizing | Equal weight across all {n} position{'s' if n>1 else ''} |
+""")
+
+    with col2:
+        rows = result.get("strategy_rows", [])
+        if not rows:
+            st.info("No example data available.")
+            return
+
+        first = rows[0]
+        year = first["year"]
+        buy_date = pd.Timestamp(f"{year}-01-01") + pd.DateOffset(months=offset)
+        sel_start = buy_date - pd.DateOffset(months=lb)
+        sell_date = pd.Timestamp(f"{year}-12-31")
+        universe = dm.members_at_date(buy_date)
+
+        st.markdown(f"**Concrete example: {year}**")
+
+        st.markdown(
+            f"**Universe:** ~{len(universe)} S&P 500 stocks on "
+            f"{buy_date.strftime('%b %d, %Y')}"
+        )
+        if method not in ("hold_ticker", "equal_weight_sp500", "equal_weight_nasdaq"):
+            st.markdown(
+                f"**Lookback window:** {sel_start.strftime('%b %d, %Y')} → "
+                f"{buy_date.strftime('%b %d, %Y')} ({lb} month{'s' if lb!=1 else ''})"
+            )
+
+        st.markdown(
+            f"**Buy:** {buy_date.strftime('%B %d, %Y')}  "
+            f"**Sell:** {sell_date.strftime('%B %d, %Y')}"
+        )
+
+        tickers = first.get("tickers", [])
+        hold_rets = first.get("ticker_returns", {})
+        if tickers:
+            # Fetch selection-period returns for display
+            sel_data = []
+            for tk in tickers:
+                sel_r = dm.return_between(tk, str(sel_start.date()), str(buy_date.date()))
+                hold_r = hold_rets.get(tk)
+                sel_data.append({
+                    "Ticker": tk,
+                    f"Return {sel_start.strftime('%b')}–{buy_date.strftime('%b')} (why selected)": (
+                        f"{sel_r*100:+.1f}%" if sel_r is not None else "n/a"
+                    ),
+                    f"Return held {buy_date.strftime('%b')}–{sell_date.strftime('%b')}": (
+                        f"{hold_r*100:+.1f}%" if hold_r is not None else "n/a"
+                    ),
+                })
+            st.dataframe(pd.DataFrame(sel_data), hide_index=True, use_container_width=True)
+            st.markdown(
+                f"**Portfolio return {year}:** "
+                f"`{first['portfolio_return']*100:+.1f}%`  "
+                f"(equal-weight average of {len(tickers)} stocks)"
+            )
+
+
 if run_clicked and scenario_input.strip():
     with st.spinner("Interpreting scenario…"):
         try:
@@ -171,10 +273,14 @@ if run_clicked and scenario_input.strip():
     with st.spinner("Running backtest…"):
         result = run_backtest(config, dm)
 
-    # -- Summary cards --
+    # -- Strategy explanation --
     st.divider()
     st.subheader(f"Results: _{config.get('display_name', scenario_input[:60])}_")
 
+    with st.expander("📋 What the AI understood — strategy explanation + real example", expanded=True):
+        _render_strategy_explanation(config, result, dm)
+
+    # -- Summary cards --
     init = result["initial_capital"]
     final = result["final_value"]
     spy_final = result["spy_final"]

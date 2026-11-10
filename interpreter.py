@@ -125,9 +125,13 @@ def _call_openrouter(scenario: str, initial_capital: float, start_year: int) -> 
             if not r.ok:
                 last_err = Exception(f"{r.status_code} from {model}: {r.text[:200]}")
                 continue
-            raw = r.json()["choices"][0]["message"]["content"]
-            if not raw:
-                last_err = Exception(f"Empty response from {model}")
+            try:
+                raw = r.json()["choices"][0]["message"]["content"]
+            except (KeyError, IndexError, TypeError):
+                last_err = Exception(f"Unexpected response structure from {model}: {r.text[:100]}")
+                continue
+            if not raw or not isinstance(raw, str):
+                last_err = Exception(f"Empty/null content from {model}")
                 continue
             raw = re.sub(r"```(?:json)?", "", raw.strip()).strip("`").strip()
             return json.loads(raw)

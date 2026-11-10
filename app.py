@@ -78,8 +78,10 @@ with st.sidebar:
 # Data loading
 # ---------------------------------------------------------------------------
 
+_DM_VERSION = "3"  # bump when DataManager API changes to force cache invalidation
+
 @st.cache_resource(show_spinner=False)
-def get_data_manager():
+def get_data_manager(version: str = _DM_VERSION):
     return DataManager()
 
 dm = get_data_manager()
@@ -266,7 +268,7 @@ if run_clicked and scenario_input.strip():
 
     # If market cap strategy, ensure historical shares are downloaded
     if config.get("selection_method") in ("top_n_market_cap", "top_n_market_cap_growth"):
-        if not getattr(dm, "shares_history_loaded", lambda: False)():
+        if hasattr(dm, "shares_history_loaded") and not dm.shares_history_loaded():
             with st.status("Downloading historical shares outstanding (one-time, ~2 min)…", expanded=True) as st_shares:
                 progress_bar2 = st.progress(0)
                 status_text2 = st.empty()

@@ -73,6 +73,13 @@ Example — default annual:
 _openrouter_free_models_cache = []
 
 
+def _parse_params_b(model_id: str) -> float:
+    """Extract parameter count in billions from a model ID string."""
+    import re as _re
+    m = _re.search(r'(\d+(?:\.\d+)?)\s*b(?:\b|_|-)', model_id.lower())
+    return float(m.group(1)) if m else 0.0
+
+
 def _get_free_models(key: str) -> list:
     global _openrouter_free_models_cache
     if _openrouter_free_models_cache:
@@ -86,33 +93,23 @@ def _get_free_models(key: str) -> list:
         )
         if r.ok:
             all_models = r.json().get("data", [])
-            available = {m["id"] for m in all_models if m["id"].endswith(":free")}
-
-            # Preferred order: largest/most capable instruction models first
-            # Skip vision-only and tiny (<3B) models
-            _priority = [
-                "nvidia/nemotron-3-ultra-550b-a55b:free",
-                "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
-                "google/gemma-4-31b-it:free",
-                "google/gemma-4-26b-a4b-it:free",
-                "nvidia/nemotron-3.5-lightning:free",
-                "xingchen-agi/xing4.0-29b-a4b:free",
-                "cohere/north-mini-code:free",
+            free = [
+                m for m in all_models
+                if m["id"].endswith(":free")
+                and m.get("pricing", {}).get("prompt") == "0"
+                and m.get("pricing", {}).get("completion") == "0"
+                and "text" in m.get("architecture", {}).get("output_modalities", ["text"])
+                and m.get("architecture", {}).get("modality") != "image->text"
             ]
-            _skip_any = ("vl", "embed", "rerank", "1.7b", "2.6b", "note")
-            ordered = [m for m in _priority if m in available]
-            # append any new free models not in our priority list
-            extras = [
-                m for m in available
-                if m not in _priority
-                and not any(s in m.lower() for s in _skip_any)
-            ]
-            ordered.extend(sorted(extras))
-            _openrouter_free_models_cache = ordered[:10]
+            # skip tiny models (< 3B) — too unreliable for structured JSON output
+            capable = [m for m in free if _parse_params_b(m["id"]) >= 3 or _parse_params_b(m["id"]) == 0]
+            # rank by parameter count descending; unknown size sorted last
+            ranked = sorted(capable, key=lambda m: _parse_params_b(m["id"]), reverse=True)
+            _openrouter_free_models_cache = [m["id"] for m in ranked[:10]]
             return _openrouter_free_models_cache
     except Exception:
         pass
-    return ["meta-llama/llama-3.1-8b-instruct:free"]
+    return []
 
 
 def _call_openrouter(scenario: str, initial_capital: float, start_year: int) -> dict:
@@ -126,6 +123,8 @@ def _call_openrouter(scenario: str, initial_capital: float, start_year: int) -> 
         "X-Title": "Strategy Lab",
     }
     models = _get_free_models(key)
+    if not models:
+        raise Exception("No free models available on OpenRouter right now — try again shortly.")
     errors = []
     rate_limited = 0
     for model in models:

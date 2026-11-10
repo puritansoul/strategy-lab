@@ -64,23 +64,47 @@ Example output:
 """
 
 
+_openrouter_free_models_cache = []
+
+
+def _get_free_models(key: str) -> list:
+    global _openrouter_free_models_cache
+    if _openrouter_free_models_cache:
+        return _openrouter_free_models_cache
+    import requests as _req
+    try:
+        r = _req.get(
+            "https://openrouter.ai/api/v1/models",
+            headers={"Authorization": f"Bearer {key}"},
+            timeout=10,
+        )
+        if r.ok:
+            all_models = r.json().get("data", [])
+            free = [m["id"] for m in all_models if m["id"].endswith(":free")]
+            # prefer instruction-tuned models
+            ranked = sorted(free, key=lambda x: (
+                "llama" not in x,
+                "70b" not in x and "8b" not in x,
+                x,
+            ))
+            _openrouter_free_models_cache = ranked[:8] if ranked else free[:8]
+            return _openrouter_free_models_cache
+    except Exception:
+        pass
+    return ["meta-llama/llama-3.1-8b-instruct:free"]
+
+
 def _call_openrouter(scenario: str, initial_capital: float, start_year: int) -> dict:
     import requests as _req
     key = os.environ["OPENROUTER_API_KEY"]
     user_msg = f"Scenario: {scenario}\nInitial capital: ${initial_capital:,.0f}\nStart year: {start_year}"
-    models = [
-        "meta-llama/llama-3.1-8b-instruct:free",
-        "meta-llama/llama-3.2-3b-instruct:free",
-        "mistralai/mistral-7b-instruct:free",
-        "qwen/qwen-2.5-7b-instruct:free",
-        "google/gemma-2-9b-it:free",
-    ]
     headers = {
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
         "HTTP-Referer": "https://strategy-lab.streamlit.app",
         "X-Title": "Strategy Lab",
     }
+    models = _get_free_models(key)
     last_err = None
     for model in models:
         try:
@@ -99,7 +123,8 @@ def _call_openrouter(scenario: str, initial_capital: float, start_year: int) -> 
                 timeout=20,
             )
             if not r.ok:
-                raise Exception(f"{r.status_code} from {model}: {r.text[:200]}")
+                last_err = Exception(f"{r.status_code} from {model}: {r.text[:200]}")
+                continue
             raw = r.json()["choices"][0]["message"]["content"].strip()
             raw = re.sub(r"```(?:json)?", "", raw).strip("`").strip()
             return json.loads(raw)

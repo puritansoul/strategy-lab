@@ -60,7 +60,7 @@ RULES:
 - If start year not mentioned → use 2001
 - NOTE: "hold for 3 quarters" with "rebalance every year" means buy_offset_months=3 (buy in April after Q1 ends), NOT quarterly rebalancing
 
-Respond ONLY with raw JSON. No explanation, no markdown fences.
+IMPORTANT: Your entire response must be a single valid JSON object. No explanation, no markdown, no code fences, no extra text — just the raw JSON object starting with { and ending with }.
 
 Example — "buy top 5 Q1 performers, hold 3 quarters, rebalance annually":
 {"selection_method":"top_n_prior_return","n":5,"tickers":[],"rebalance_frequency":"annual","selection_lookback_months":3,"buy_offset_months":3,"start_year":2001,"end_year":2026,"initial_capital":10000,"weight":"equal","display_name":"Top 5 Q1 winners, hold Apr–Dec (annual)"}
@@ -86,14 +86,22 @@ def _get_free_models(key: str) -> list:
         )
         if r.ok:
             all_models = r.json().get("data", [])
-            free = [m["id"] for m in all_models if m["id"].endswith(":free")]
-            # prefer instruction-tuned models
+            # only instruction-following models (skip base/embedding/vision-only)
+            _skip = ("embed", "base", "vision", "vl", "coder", "code", "math", "rerank")
+            free = [
+                m["id"] for m in all_models
+                if m["id"].endswith(":free")
+                and not any(s in m["id"].lower() for s in _skip)
+                and ("instruct" in m["id"].lower() or "chat" in m["id"].lower()
+                     or "llama" in m["id"].lower() or "qwen" in m["id"].lower()
+                     or "mistral" in m["id"].lower() or "gemma" in m["id"].lower())
+            ]
             ranked = sorted(free, key=lambda x: (
                 "llama" not in x,
                 "70b" not in x and "8b" not in x,
                 x,
             ))
-            _openrouter_free_models_cache = ranked[:8] if ranked else free[:8]
+            _openrouter_free_models_cache = ranked[:6] if ranked else free[:6]
             return _openrouter_free_models_cache
     except Exception:
         pass
@@ -121,11 +129,10 @@ def _call_openrouter(scenario: str, initial_capital: float, start_year: int) -> 
                     "model": model,
                     "messages": [
                         {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": user_msg},
+                        {"role": "user", "content": user_msg + "\n\nReply with raw JSON only."},
                     ],
                     "temperature": 0,
                     "max_tokens": 400,
-                    "response_format": {"type": "json_object"},
                 },
                 timeout=25,
             )

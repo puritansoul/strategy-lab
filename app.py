@@ -12,7 +12,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 # Inject Streamlit Cloud secrets into environment variables
-for _key in ("GEMINI_API_KEY", "GROQ_API_KEY", "ANTHROPIC_API_KEY"):
+for _key in ("OPENROUTER_API_KEY", "GROQ_API_KEY", "ANTHROPIC_API_KEY"):
     if _key not in os.environ:
         try:
             os.environ[_key] = st.secrets[_key]
@@ -47,8 +47,8 @@ with st.sidebar:
     st.divider()
 
     import os as _os
-    if _os.environ.get("GEMINI_API_KEY"):
-        st.success("🤖 Gemini AI interpreter active (free)")
+    if _os.environ.get("OPENROUTER_API_KEY"):
+        st.success("🤖 AI interpreter active (free)")
     elif _os.environ.get("GROQ_API_KEY"):
         st.success("🤖 Groq AI interpreter active (free)")
     elif _os.environ.get("ANTHROPIC_API_KEY"):
@@ -57,12 +57,11 @@ with st.sidebar:
         st.warning("🔤 Rule-based interpreter (limited)")
         with st.expander("Enable free AI interpreter"):
             st.markdown(
-                "**Google Gemini (recommended — free)**\n\n"
-                "1. Go to **aistudio.google.com**\n"
-                "2. Sign in with Gmail → Get API key\n"
-                "3. In terminal:\n"
-                "```\nexport GEMINI_API_KEY='your-key'\n```\n"
-                "4. Restart the app"
+                "**OpenRouter (free)**\n\n"
+                "1. Go to **openrouter.ai** → Sign up (any email)\n"
+                "2. Keys → Create Key\n"
+                "3. Add to Streamlit secrets:\n"
+                "```\nOPENROUTER_API_KEY = 'sk-or-...'\n```"
             )
     st.divider()
     st.caption("Data: S&P 500 composition via fja05680/sp500 · Prices via yfinance")

@@ -64,39 +64,40 @@ Example output:
 """
 
 
-_GEMINI_MODELS = [
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-lite",
-    "gemini-1.5-flash",
-    "gemini-1.5-flash-latest",
-]
-
-
-def _call_gemini(scenario: str, initial_capital: float, start_year: int) -> dict:
+def _call_openrouter(scenario: str, initial_capital: float, start_year: int) -> dict:
     import requests as _req
-    key = os.environ["GEMINI_API_KEY"]
+    key = os.environ["OPENROUTER_API_KEY"]
     user_msg = f"Scenario: {scenario}\nInitial capital: ${initial_capital:,.0f}\nStart year: {start_year}"
-    payload = {
-        "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
-        "contents": [{"role": "user", "parts": [{"text": user_msg}]}],
-        "generationConfig": {"temperature": 0, "maxOutputTokens": 300},
-    }
+    # Free models on OpenRouter (tried in order)
+    models = [
+        "meta-llama/llama-3.1-8b-instruct:free",
+        "mistralai/mistral-7b-instruct:free",
+        "google/gemma-2-9b-it:free",
+    ]
     last_err = None
-    for model in _GEMINI_MODELS:
-        for version in ("v1beta", "v1"):
-            url = (
-                f"https://generativelanguage.googleapis.com/{version}"
-                f"/models/{model}:generateContent?key={key}"
+    for model in models:
+        try:
+            r = _req.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json={
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": user_msg},
+                    ],
+                    "temperature": 0,
+                    "max_tokens": 300,
+                },
+                timeout=20,
             )
-            try:
-                r = _req.post(url, json=payload, timeout=15)
-                r.raise_for_status()
-                raw = r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-                raw = re.sub(r"```(?:json)?", "", raw).strip("`").strip()
-                return json.loads(raw)
-            except Exception as e:
-                last_err = e
-                continue
+            r.raise_for_status()
+            raw = r.json()["choices"][0]["message"]["content"].strip()
+            raw = re.sub(r"```(?:json)?", "", raw).strip("`").strip()
+            return json.loads(raw)
+        except Exception as e:
+            last_err = e
+            continue
     raise last_err
 
 
@@ -283,16 +284,16 @@ def _rule_based(scenario: str, initial_capital: float, start_year: int) -> dict:
 def interpret(scenario: str, initial_capital: float = 10_000, start_year: int = 2001) -> dict:
     """
     Interpret a natural-language scenario into a backtest config.
-    Tries Groq → Anthropic → rule-based, in that order.
+    Priority: OpenRouter → Groq → Anthropic → rule-based
     """
     config = None
     error_msg = None
 
-    if os.environ.get("GEMINI_API_KEY"):
+    if os.environ.get("OPENROUTER_API_KEY"):
         try:
-            config = _call_gemini(scenario, initial_capital, start_year)
+            config = _call_openrouter(scenario, initial_capital, start_year)
         except Exception as e:
-            error_msg = f"Gemini: {e}"
+            error_msg = f"OpenRouter: {e}"
 
     if config is None and os.environ.get("GROQ_API_KEY"):
         try:

@@ -68,18 +68,25 @@ def _call_openrouter(scenario: str, initial_capital: float, start_year: int) -> 
     import requests as _req
     key = os.environ["OPENROUTER_API_KEY"]
     user_msg = f"Scenario: {scenario}\nInitial capital: ${initial_capital:,.0f}\nStart year: {start_year}"
-    # Free models on OpenRouter (tried in order)
     models = [
         "meta-llama/llama-3.1-8b-instruct:free",
+        "meta-llama/llama-3.2-3b-instruct:free",
         "mistralai/mistral-7b-instruct:free",
+        "qwen/qwen-2.5-7b-instruct:free",
         "google/gemma-2-9b-it:free",
     ]
+    headers = {
+        "Authorization": f"Bearer {key}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://strategy-lab.streamlit.app",
+        "X-Title": "Strategy Lab",
+    }
     last_err = None
     for model in models:
         try:
             r = _req.post(
                 "https://openrouter.ai/api/v1/chat/completions",
-                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                headers=headers,
                 json={
                     "model": model,
                     "messages": [

@@ -70,6 +70,28 @@ Example — default annual:
 """
 
 
+def _extract_json(text: str) -> str:
+    """Extract the first valid JSON object from text that may contain reasoning or thinking tags."""
+    # Strip thinking/reasoning tags (Nemotron, DeepSeek-R1, etc.)
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    text = re.sub(r"<reasoning>.*?</reasoning>", "", text, flags=re.DOTALL)
+    # Strip markdown fences
+    text = re.sub(r"```(?:json)?", "", text).strip("`").strip()
+    # Find the outermost { ... } block
+    start = text.find("{")
+    if start == -1:
+        return ""
+    depth = 0
+    for i, ch in enumerate(text[start:], start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : i + 1]
+    return ""
+
+
 _openrouter_free_models_cache = []
 
 
@@ -158,7 +180,10 @@ def _call_openrouter(scenario: str, initial_capital: float, start_year: int) -> 
             if not raw or not isinstance(raw, str):
                 errors.append(f"{model}: empty content")
                 continue
-            raw = re.sub(r"```(?:json)?", "", raw.strip()).strip("`").strip()
+            raw = _extract_json(raw)
+            if not raw:
+                errors.append(f"{model}: no JSON found in response")
+                continue
             return json.loads(raw)
         except json.JSONDecodeError as e:
             errors.append(f"{model}: bad JSON ({e})")

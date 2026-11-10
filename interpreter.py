@@ -98,7 +98,8 @@ def _call_openrouter(scenario: str, initial_capital: float, start_year: int) -> 
                 },
                 timeout=20,
             )
-            r.raise_for_status()
+            if not r.ok:
+                raise Exception(f"{r.status_code} from {model}: {r.text[:200]}")
             raw = r.json()["choices"][0]["message"]["content"].strip()
             raw = re.sub(r"```(?:json)?", "", raw).strip("`").strip()
             return json.loads(raw)

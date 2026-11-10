@@ -29,6 +29,7 @@ SELECTION METHODS:
 - "bottom_n_momentum"     : buy worst N stocks by recent price momentum
 - "top_n_market_cap"      : buy top N stocks by market cap (largest companies)
 - "hold_ticker"           : simply hold specific named ticker(s) every year
+- "top_n_january_return"  : buy top N stocks by January return, hold Feb–Dec (January effect)
 - "equal_weight_sp500"    : hold SPY (S&P 500 index fund)
 - "equal_weight_nasdaq"   : hold QQQ (Nasdaq 100 index fund)
 
@@ -46,6 +47,7 @@ RULES:
 - "worst", "bottom", "losers", "contrarian", "underperformers" → bottom_n_prior_return
 - "biggest", "largest", "market cap", "market caps", "most valuable", "largest companies", "biggest companies", "by market cap", "by size" → top_n_market_cap
 - "momentum", "trending", "hot", "breakout" → top_n_momentum
+- "best in January", "January performers", "buy in February", "January effect", "perform in January", "January winners" → top_n_january_return
 - "hold X", "buy X", "invest in X", "just X" (specific company/ticker) → hold_ticker
 - "S&P 500 index", "just SPY", "index fund" → equal_weight_sp500
 - If user says "top 5" or "5 stocks" or "best 5" or "5 best" → n=5
@@ -196,6 +198,8 @@ def _rule_based(scenario: str, initial_capital: float, start_year: int) -> dict:
         config["selection_method"] = "equal_weight_sp500"
     elif "QQQ" in scenario or re.search(r'\b(nasdaq\s*100|qqq)\b', text):
         config["selection_method"] = "equal_weight_nasdaq"
+    elif re.search(r'\b(january|jan\.?)\b', text) and re.search(r'\b(best|top|perform|winner|feb|february)\b', text):
+        config["selection_method"] = "top_n_january_return"
     elif re.search(r'\b(worst|bottom|loser|losing|losers|loss|losses|contrarian|fallen|fell|dropped|declined|underperform|mean.?revert|bad|poor|laggard|laggards|dog|dogs)\b', text):
         config["selection_method"] = "bottom_n_prior_return"
     elif re.search(r'\b(market.?caps?|largest|biggest|most valuable|mega.?cap)\b', text):
@@ -224,6 +228,7 @@ def _rule_based(scenario: str, initial_capital: float, start_year: int) -> dict:
         "bottom_n_momentum":     f"Bottom {n} momentum stock{'s' if n>1 else ''}",
         "top_n_market_cap":      f"Top {n} largest by market cap",
         "hold_ticker":           f"Hold {', '.join(config['tickers'])}",
+        "top_n_january_return":  f"Top {n} January winners, hold Feb–Dec",
         "equal_weight_sp500":    "S&P 500 index (SPY)",
         "equal_weight_nasdaq":   "Nasdaq 100 index (QQQ)",
     }
@@ -264,6 +269,8 @@ def interpret(scenario: str, initial_capital: float = 10_000, start_year: int = 
     if config is None:
         config = _rule_based(scenario, initial_capital, start_year)
         config["_interpreter"] = "rule-based"
+        if error_msg:
+            config["_interpreter_error"] = error_msg
     else:
         config["_interpreter"] = "llm"
 

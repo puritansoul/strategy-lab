@@ -240,6 +240,26 @@ class DataManager:
                 out[tk] = price
         return out
 
+    def january_return(self, ticker: str, year: int) -> Optional[float]:
+        p = self.prices()
+        if ticker not in p.columns:
+            return None
+        series = p[ticker][f"{year}-01-01":f"{year}-01-31"].dropna()
+        if len(series) < 5:
+            return None
+        return float((series.iloc[-1] - series.iloc[0]) / series.iloc[0])
+
+    def year_return_from_month(self, ticker: str, year: int, start_month: int) -> Optional[float]:
+        p = self.prices()
+        if ticker not in p.columns:
+            return None
+        start = f"{year}-{start_month:02d}-01"
+        end = "2026-11-09" if year == 2026 else f"{year}-12-31"
+        series = p[ticker][start:end].dropna()
+        if len(series) < 5:
+            return None
+        return float((series.iloc[-1] - series.iloc[0]) / series.iloc[0])
+
     def period_momentum(self, tickers: List[str], year: int, months: int) -> Dict[str, float]:
         """Return over the prior `months` months ending at start of `year`."""
         p = self.prices()
@@ -333,6 +353,16 @@ def run_backtest(config: dict, dm: DataManager) -> dict:
             ranked = [t for t, _ in sorted(rets.items(), key=lambda x: x[1], reverse=reverse)]
             selected = _dedup_tickers(ranked, n)
 
+        elif method == "top_n_january_return":
+            universe = dm.members_year(year)
+            jan_rets = {tk: dm.january_return(tk, year) for tk in universe}
+            jan_rets = {k: v for k, v in jan_rets.items() if v is not None}
+            if not jan_rets:
+                strategy_rows.append(_empty_row(year, portfolio_value))
+                continue
+            ranked = [t for t, _ in sorted(jan_rets.items(), key=lambda x: x[1], reverse=True)]
+            selected = _dedup_tickers(ranked, n)
+
         elif method in ("top_n_momentum", "bottom_n_momentum"):
             universe = dm.members_year(year)
             moms = dm.period_momentum(list(universe), year, lookback_months)
@@ -362,7 +392,10 @@ def run_backtest(config: dict, dm: DataManager) -> dict:
             selected = ["SPY"]
 
         # ---- compute returns for selected tickers ----
-        ticker_rets = [(tk, dm.year_return(tk, year)) for tk in selected]
+        if method == "top_n_january_return":
+            ticker_rets = [(tk, dm.year_return_from_month(tk, year, 2)) for tk in selected]
+        else:
+            ticker_rets = [(tk, dm.year_return(tk, year)) for tk in selected]
         ticker_rets = [(tk, r) for tk, r in ticker_rets if r is not None]
 
         if not ticker_rets:

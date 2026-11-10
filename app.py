@@ -98,6 +98,7 @@ else:
 EXAMPLES = [
     "Buy last year's best performing stock",
     "Buy top 5 performers from prior year",
+    "Buy top 5 January winners on Feb 1 each year",
     "Buy the 10 worst performers from prior year (contrarian)",
     "Buy the 3 largest companies by market cap",
     "Buy top 10 momentum stocks (6-month lookback)",
@@ -148,7 +149,11 @@ if run_clicked and scenario_input.strip():
             st.error(f"Could not interpret scenario: {e}")
             st.stop()
         if config.get("_interpreter") == "rule-based":
-            st.caption("⚠️ Using rule-based interpreter — add a free Gemini key for better accuracy.")
+            err = config.get("_interpreter_error", "")
+            if err:
+                st.caption(f"⚠️ AI interpreter failed: {err}")
+            else:
+                st.caption("⚠️ Using rule-based interpreter — add a free Gemini key for better accuracy.")
 
     # If market cap strategy and shares not cached yet, download now
     if config.get("selection_method") == "top_n_market_cap" and not dm.shares_loaded():

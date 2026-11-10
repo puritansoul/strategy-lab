@@ -273,8 +273,13 @@ class DataManager:
         if not collected:
             return pd.DataFrame()
 
+        # Deduplicate each series (yfinance occasionally returns duplicate timestamps)
+        collected = {tk: s[~s.index.duplicated(keep="last")] for tk, s in collected.items()}
+
         # Build sparse frame then forward-fill to every trading day
         raw = pd.DataFrame(collected)
+        # Guard: drop any remaining duplicate index rows (union can expose them)
+        raw = raw[~raw.index.duplicated(keep="last")]
         daily = raw.reindex(raw.index.union(prices.index)).sort_index().ffill().reindex(prices.index)
         daily.to_parquet(cache)
         return daily

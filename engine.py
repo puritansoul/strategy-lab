@@ -240,10 +240,11 @@ class DataManager:
             try:
                 s = yf.Ticker(tk).get_shares_full(start=START_DATE, end=END_DATE)
                 if s is not None and not s.empty:
-                    # Normalize to tz-naive date-only index; dedup after normalization
-                    # (two tz-aware timestamps can collapse to the same date)
-                    s.index = pd.to_datetime(s.index).tz_localize(None).normalize()
-                    s = s[~s.index.duplicated(keep="last")].astype(float)
+                    idx = pd.to_datetime(s.index)
+                    if idx.tz is not None:
+                        idx = idx.tz_convert(None)  # tz-aware → tz-naive
+                    s = pd.Series(s.values, index=idx.normalize(), dtype=float)
+                    s = s.groupby(s.index).last()   # bulletproof dedup
                     return tk, s
             except Exception:
                 pass
@@ -277,13 +278,9 @@ class DataManager:
         if not collected:
             return pd.DataFrame()
 
-        # Deduplicate each series (yfinance occasionally returns duplicate timestamps)
-        collected = {tk: s[~s.index.duplicated(keep="last")] for tk, s in collected.items()}
-
         # Build sparse frame then forward-fill to every trading day
         raw = pd.DataFrame(collected)
-        # Guard: drop any remaining duplicate index rows (union can expose them)
-        raw = raw[~raw.index.duplicated(keep="last")]
+        raw = raw.groupby(raw.index).last()  # drop any remaining duplicate rows
         daily = raw.reindex(raw.index.union(prices.index)).sort_index().ffill().reindex(prices.index)
         daily.to_parquet(cache)
         return daily

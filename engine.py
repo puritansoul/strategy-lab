@@ -240,7 +240,11 @@ class DataManager:
             try:
                 s = yf.Ticker(tk).get_shares_full(start=START_DATE, end=END_DATE)
                 if s is not None and not s.empty:
-                    return tk, s.astype(float)
+                    # Normalize to tz-naive date-only index; dedup after normalization
+                    # (two tz-aware timestamps can collapse to the same date)
+                    s.index = pd.to_datetime(s.index).tz_localize(None).normalize()
+                    s = s[~s.index.duplicated(keep="last")].astype(float)
+                    return tk, s
             except Exception:
                 pass
             # fallback: single current value as a constant series

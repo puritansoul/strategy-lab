@@ -123,7 +123,7 @@ if "auto_run" not in st.session_state:
 st.subheader("Scenario")
 cols = st.columns(4)
 for i, ex in enumerate(EXAMPLES):
-    if cols[i % 4].button(ex, use_container_width=True, key=f"ex_{i}"):
+    if cols[i % 4].button(ex, width="stretch", key=f"ex_{i}"):
         st.session_state["scenario_text"] = ex
         st.session_state["auto_run"] = True
         # No st.rerun() — button click already triggers a rerender
@@ -136,7 +136,7 @@ scenario_input = st.text_area(
 )
 
 run_col, _ = st.columns([1, 5])
-manual_run = run_col.button("▶  Run Backtest", type="primary", use_container_width=True)
+manual_run = run_col.button("▶  Run Backtest", type="primary", width="stretch")
 
 # Consume auto_run flag — read then immediately clear so it only fires once
 auto_run = st.session_state.get("auto_run", False)
@@ -245,7 +245,7 @@ def _render_strategy_explanation(config: dict, result: dict, dm) -> None:
                         f"{hold_r*100:+.1f}%" if hold_r is not None else "n/a"
                     ),
                 })
-            st.dataframe(pd.DataFrame(sel_data), hide_index=True, use_container_width=True)
+            st.dataframe(pd.DataFrame(sel_data), hide_index=True, width="stretch")
             st.markdown(
                 f"**Portfolio return {year}:** "
                 f"`{first['portfolio_return']*100:+.1f}%`  "
@@ -329,7 +329,7 @@ if run_clicked and scenario_input.strip():
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         yaxis=dict(tickformat="$,.0f"),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # -- Year-by-year table --
     st.subheader("Year-by-Year Breakdown")

@@ -76,27 +76,31 @@ _GEMINI_MODELS = [
 def _call_gemini(scenario: str, initial_capital: float, start_year: int) -> dict:
     from google import genai
     from google.genai import types
-    client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
     user_msg = f"Scenario: {scenario}\nInitial capital: ${initial_capital:,.0f}\nStart year: {start_year}"
 
     last_err = None
     for model in _GEMINI_MODELS:
-        try:
-            resp = client.models.generate_content(
-                model=model,
-                contents=user_msg,
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_PROMPT,
-                    temperature=0,
-                    max_output_tokens=300,
-                ),
-            )
-            raw = resp.text.strip()
-            raw = re.sub(r"```(?:json)?", "", raw).strip("`").strip()
-            return json.loads(raw)
-        except Exception as e:
-            last_err = e
-            continue
+        for api_version in ("v1beta", "v1"):
+            try:
+                client = genai.Client(
+                    api_key=os.environ["GEMINI_API_KEY"],
+                    http_options={"api_version": api_version},
+                )
+                resp = client.models.generate_content(
+                    model=model,
+                    contents=user_msg,
+                    config=types.GenerateContentConfig(
+                        system_instruction=SYSTEM_PROMPT,
+                        temperature=0,
+                        max_output_tokens=300,
+                    ),
+                )
+                raw = resp.text.strip()
+                raw = re.sub(r"```(?:json)?", "", raw).strip("`").strip()
+                return json.loads(raw)
+            except Exception as e:
+                last_err = e
+                continue
     raise last_err
 
 

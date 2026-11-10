@@ -51,15 +51,21 @@ RULES:
 - "hold X", "buy X", "invest in X", "just X" (specific company) → hold_ticker
 - "S&P 500 index", "just SPY", "index fund" → equal_weight_sp500
 - "January effect", "best in January", "buy in February based on January" → top_n_prior_return + buy_offset_months=1 + selection_lookback_months=1
+- "first quarter", "Q1 performers", "buy in April based on Q1" → top_n_prior_return + buy_offset_months=3 + selection_lookback_months=3 + rebalance_frequency=annual
+- "second quarter", "Q2 performers" → top_n_prior_return + buy_offset_months=6 + selection_lookback_months=3 + rebalance_frequency=annual
 - "every quarter", "quarterly rotation", "rebalance quarterly" → rebalance_frequency=quarterly, selection_lookback_months=3
 - "every month", "monthly rotation", "rebalance monthly" → rebalance_frequency=monthly, selection_lookback_months=1
 - If user says "top 5" or "5 stocks" or "best 5" → n=5
 - If no number mentioned → n=1
 - If start year not mentioned → use 2001
+- NOTE: "hold for 3 quarters" with "rebalance every year" means buy_offset_months=3 (buy in April after Q1 ends), NOT quarterly rebalancing
 
 Respond ONLY with raw JSON. No explanation, no markdown fences.
 
-Example output:
+Example — "buy top 5 Q1 performers, hold 3 quarters, rebalance annually":
+{"selection_method":"top_n_prior_return","n":5,"tickers":[],"rebalance_frequency":"annual","selection_lookback_months":3,"buy_offset_months":3,"start_year":2001,"end_year":2026,"initial_capital":10000,"weight":"equal","display_name":"Top 5 Q1 winners, hold Apr–Dec (annual)"}
+
+Example — default annual:
 {"selection_method":"top_n_prior_return","n":5,"tickers":[],"rebalance_frequency":"annual","selection_lookback_months":12,"buy_offset_months":0,"start_year":2001,"end_year":2026,"initial_capital":10000,"weight":"equal","display_name":"Top 5 prior-year winners (annual)"}
 """
 
@@ -257,8 +263,21 @@ def _rule_based(scenario: str, initial_capital: float, start_year: int) -> dict:
         config["rebalance_frequency"] = "monthly"
         config["selection_lookback_months"] = 1
     elif re.search(r'\b(every quarter|quarterly|each quarter|per quarter|quarter by quarter)\b', text):
-        config["rebalance_frequency"] = "quarterly"
+        # "rebalance every year" overrides "quarterly" if both appear
+        if not re.search(r'\b(every year|annually|each year|rebalanc.*year|year.*rebalanc)\b', text):
+            config["rebalance_frequency"] = "quarterly"
+            config["selection_lookback_months"] = 3
+
+    # ---- Quarter-based buy offset (annual rebalance, buy after a specific quarter) ----
+    # e.g. "top performers from first quarter, hold 3 quarters" → buy April, annual
+    if re.search(r'\b(first quarter|q1|quarter one)\b', text) and re.search(r'\b(hold|3 quarter|three quarter)\b', text):
+        config["rebalance_frequency"] = "annual"
         config["selection_lookback_months"] = 3
+        config["buy_offset_months"] = 3
+    elif re.search(r'\b(second quarter|q2|quarter two)\b', text) and re.search(r'\b(hold|2 quarter|two quarter)\b', text):
+        config["rebalance_frequency"] = "annual"
+        config["selection_lookback_months"] = 3
+        config["buy_offset_months"] = 6
 
     # ---- January effect (detect before general method) ----
     if re.search(r'\b(january|jan\.?)\b', text) and re.search(r'\b(best|top|perform|winner|feb|february)\b', text):
@@ -302,8 +321,10 @@ def _rule_based(scenario: str, initial_capital: float, start_year: int) -> dict:
     offset = config.get("buy_offset_months", 0)
     freq_label = {"annual": "annual", "quarterly": "quarterly", "monthly": "monthly"}.get(freq, freq)
     jan_effect = (offset == 1 and lb == 1)
+    q1_effect = (offset == 3 and lb == 3 and freq == "annual")
     _labels = {
         "top_n_prior_return":    (f"Top {n} January winners (buy Feb)" if jan_effect
+                                  else f"Top {n} Q1 winners (buy Apr, hold 3Q)" if q1_effect
                                   else f"Top {n} prior-{lb}mo winner{'s' if n>1 else ''} ({freq_label})"),
         "bottom_n_prior_return": f"Bottom {n} prior-{lb}mo loser{'s' if n>1 else ''} ({freq_label})",
         "top_n_momentum":        f"Top {n} momentum stock{'s' if n>1 else ''} ({lb}m, {freq_label})",

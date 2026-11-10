@@ -125,8 +125,11 @@ def _call_openrouter(scenario: str, initial_capital: float, start_year: int) -> 
             if not r.ok:
                 last_err = Exception(f"{r.status_code} from {model}: {r.text[:200]}")
                 continue
-            raw = r.json()["choices"][0]["message"]["content"].strip()
-            raw = re.sub(r"```(?:json)?", "", raw).strip("`").strip()
+            raw = r.json()["choices"][0]["message"]["content"]
+            if not raw:
+                last_err = Exception(f"Empty response from {model}")
+                continue
+            raw = re.sub(r"```(?:json)?", "", raw.strip()).strip("`").strip()
             return json.loads(raw)
         except Exception as e:
             last_err = e

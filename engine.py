@@ -330,8 +330,17 @@ def _generate_periods(
     end_year: int,
     frequency: str,
     buy_offset_months: int = 0,
+    hold_months: Optional[int] = None,
 ) -> List[Dict]:
-    """Generate (buy, sell, year) dicts for each rebalance period."""
+    """Generate (buy, sell, year) dicts for each rebalance period.
+
+    hold_months controls how long each position is held.
+    If None, defaults to the natural period length (12/3/1 months).
+    """
+    # Default hold = natural period length
+    _default_hold = {"annual": 12, "quarterly": 3, "monthly": 1}
+    hold = hold_months if hold_months is not None else _default_hold.get(frequency or "annual", 12)
+
     periods: List[Dict] = []
 
     if frequency in ("annual", None, ""):
@@ -339,8 +348,7 @@ def _generate_periods(
             buy = pd.Timestamp(f"{year}-01-01") + pd.DateOffset(months=buy_offset_months)
             if buy > _MAX_DATE:
                 break
-            next_buy = pd.Timestamp(f"{year + 1}-01-01") + pd.DateOffset(months=buy_offset_months)
-            sell = min(next_buy - pd.Timedelta(days=1), _MAX_DATE)
+            sell = min(buy + pd.DateOffset(months=hold) - pd.Timedelta(days=1), _MAX_DATE)
             periods.append({"buy": buy, "sell": sell, "year": year})
 
     elif frequency == "quarterly":
@@ -350,12 +358,7 @@ def _generate_periods(
                 buy = pd.Timestamp(f"{year}-{qm:02d}-01") + pd.DateOffset(months=buy_offset_months)
                 if buy > _MAX_DATE:
                     break
-                nqm = q_months[(i + 1) % 4]
-                ny = year if i < 3 else year + 1
-                sell = min(
-                    pd.Timestamp(f"{ny}-{nqm:02d}-01") - pd.Timedelta(days=1),
-                    _MAX_DATE,
-                )
+                sell = min(buy + pd.DateOffset(months=hold) - pd.Timedelta(days=1), _MAX_DATE)
                 if buy >= sell:
                     continue
                 periods.append({"buy": buy, "sell": sell, "year": year, "quarter": i + 1})
@@ -366,11 +369,7 @@ def _generate_periods(
                 buy = pd.Timestamp(f"{year}-{month:02d}-01") + pd.DateOffset(months=buy_offset_months)
                 if buy > _MAX_DATE:
                     break
-                if month < 12:
-                    sell = pd.Timestamp(f"{year}-{month+1:02d}-01") - pd.Timedelta(days=1)
-                else:
-                    sell = pd.Timestamp(f"{year}-12-31")
-                sell = min(sell, _MAX_DATE)
+                sell = min(buy + pd.DateOffset(months=hold) - pd.Timedelta(days=1), _MAX_DATE)
                 if buy >= sell:
                     continue
                 periods.append({"buy": buy, "sell": sell, "year": year, "month": month})
@@ -423,12 +422,13 @@ def run_backtest(config: dict, dm: DataManager) -> dict:
     capital = float(config.get("initial_capital", 10_000.0))
     frequency = config.get("rebalance_frequency", "annual")
     buy_offset = int(config.get("buy_offset_months", 0))
+    hold_months = config.get("hold_months")  # None = natural period length
 
     # Default lookback: 6 months for momentum methods, 12 for everything else
     default_lb = 6 if method in ("top_n_momentum", "bottom_n_momentum") else 12
     lookback_months = int(config.get("selection_lookback_months", config.get("lookback_months", default_lb)))
 
-    periods = _generate_periods(start_year, end_year, frequency, buy_offset)
+    periods = _generate_periods(start_year, end_year, frequency, buy_offset, hold_months)
 
     portfolio_value = capital
     period_rows: List[dict] = []

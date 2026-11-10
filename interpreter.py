@@ -35,9 +35,10 @@ SELECTION METHODS:
 PARAMETERS:
 - n: number of stocks to hold (1 = concentrated, 5/10/20 = diversified)
 - tickers: list of ticker symbols — ONLY for hold_ticker method
-- rebalance_frequency: "annual" (default), "quarterly", or "monthly"
+- rebalance_frequency: "annual" (default), "quarterly", or "monthly" — how often to re-pick stocks
 - selection_lookback_months: months to look back for ranking (default: 12 annual, 3 quarterly, 1 monthly)
-- buy_offset_months: months to delay buying after lookback ends (default 0; use 1 for January effect)
+- buy_offset_months: months to delay buying after period start (default 0; use 1 for Jan effect, 3 to buy in April)
+- hold_months: how many months to hold each position before selling (default: null = full period length). Set explicitly when user specifies a different hold duration, e.g. "hold 9 months", "sell in December", "hold until next April" (=12 when buy is April)
 - start_year: first year to trade (2001-2024). Default 2001.
 - end_year: last year (use 2026 for current). Default 2026.
 - initial_capital: starting $ (default 10000)
@@ -356,6 +357,17 @@ def _rule_based(scenario: str, initial_capital: float, start_year: int) -> dict:
             config["selection_lookback_months"] = 6
     else:
         config["selection_method"] = "top_n_prior_return"
+
+    # ---- hold_months ----
+    hm = re.search(r'\bhold(?:ing)?\s+(?:for\s+)?(\d+)\s*(month|quarter)', text)
+    if hm:
+        num = int(hm.group(1))
+        unit = hm.group(2)
+        config["hold_months"] = num * 3 if unit.startswith("quarter") else num
+    elif re.search(r'\bhold(?:ing)?\s+(?:for\s+)?(?:a\s+)?(?:full\s+)?year\b', text):
+        config["hold_months"] = 12
+    elif re.search(r'\bhold(?:ing)?\s+(?:for\s+)?(?:a\s+)?(?:full\s+)?quarter\b', text):
+        config["hold_months"] = 3
 
     # ---- detect start year ----
     m = re.search(r'\b(20\d\d)\b', text)

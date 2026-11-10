@@ -28,6 +28,7 @@ SELECTION METHODS:
 - "top_n_momentum"        : buy top N stocks by recent momentum (default 6-month lookback)
 - "bottom_n_momentum"     : buy worst N stocks by recent momentum
 - "top_n_market_cap"      : buy top N stocks by market cap (largest companies)
+- "top_n_market_cap_growth": buy top N stocks by % increase in market cap over lookback
 - "hold_ticker"           : simply hold specific named ticker(s) every period
 - "equal_weight_sp500"    : hold SPY (S&P 500 index fund)
 - "equal_weight_nasdaq"   : hold QQQ (Nasdaq 100 index fund)
@@ -48,6 +49,7 @@ RULES:
 - "best", "top", "winners", "best performing" → top_n_prior_return
 - "worst", "bottom", "losers", "contrarian" → bottom_n_prior_return
 - "market cap", "market caps", "largest", "biggest", "most valuable" → top_n_market_cap
+- "market cap growth", "market cap increased", "grew most in market cap", "biggest market cap gain" → top_n_market_cap_growth
 - "momentum", "trending", "hot", "breakout" → top_n_momentum
 - "hold X", "buy X", "invest in X", "just X" (specific company) → hold_ticker
 - "S&P 500 index", "just SPY", "index fund" → equal_weight_sp500
@@ -353,6 +355,9 @@ def _rule_based(scenario: str, initial_capital: float, start_year: int) -> dict:
         config["selection_method"] = "equal_weight_nasdaq"
     elif re.search(r'\b(worst|bottom|loser|losing|losers|loss|losses|contrarian|fallen|fell|dropped|declined|underperform|mean.?revert|bad|poor|laggard|laggards|dog|dogs)\b', text):
         config["selection_method"] = "bottom_n_prior_return"
+    elif re.search(r'market.?cap.*(grew|grow|increas|gain|rose|jump|climb|most|biggest|highest).*(year|prior|previous|last)|'
+                   r'(grew|grow|increas|gain|rose|jump|climb).*(market.?cap)', text):
+        config["selection_method"] = "top_n_market_cap_growth"
     elif re.search(r'\b(market.?caps?|largest|biggest|most valuable|mega.?cap)\b', text):
         config["selection_method"] = "top_n_market_cap"
     elif re.search(r'\b(momentum|trending|hot|breakout|relative strength)\b', text):
@@ -398,7 +403,8 @@ def _rule_based(scenario: str, initial_capital: float, start_year: int) -> dict:
         "bottom_n_prior_return": f"Bottom {n} prior-{lb}mo loser{'s' if n>1 else ''} ({freq_label})",
         "top_n_momentum":        f"Top {n} momentum stock{'s' if n>1 else ''} ({lb}m, {freq_label})",
         "bottom_n_momentum":     f"Bottom {n} momentum stock{'s' if n>1 else ''} ({lb}m, {freq_label})",
-        "top_n_market_cap":      f"Top {n} largest by market cap ({freq_label})",
+        "top_n_market_cap":          f"Top {n} largest by market cap ({freq_label})",
+        "top_n_market_cap_growth":   f"Top {n} by market cap growth ({lb}mo, {freq_label})",
         "hold_ticker":           f"Hold {', '.join(config['tickers'])}",
         "equal_weight_sp500":    "S&P 500 index (SPY)",
         "equal_weight_nasdaq":   "Nasdaq 100 index (QQQ)",

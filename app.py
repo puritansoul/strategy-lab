@@ -163,7 +163,8 @@ def _render_strategy_explanation(config: dict, result: dict, dm) -> None:
         "bottom_n_prior_return": f"bottom {n} stock{'s' if n>1 else ''} by return (contrarian — worst performers)",
         "top_n_momentum":        f"top {n} stock{'s' if n>1 else ''} by momentum",
         "bottom_n_momentum":     f"bottom {n} stock{'s' if n>1 else ''} by momentum",
-        "top_n_market_cap":      f"top {n} stock{'s' if n>1 else ''} by market cap (largest companies)",
+        "top_n_market_cap":        f"top {n} stock{'s' if n>1 else ''} by market cap (largest companies)",
+        "top_n_market_cap_growth": f"top {n} stock{'s' if n>1 else ''} by market cap growth (biggest gainers)",
         "hold_ticker":           f"always hold {', '.join(tickers_cfg)} — no selection needed",
         "equal_weight_sp500":    "SPY (S&P 500 index fund) — no selection needed",
         "equal_weight_nasdaq":   "QQQ (Nasdaq 100 index fund) — no selection needed",
@@ -264,8 +265,8 @@ if run_clicked and scenario_input.strip():
             st.caption("🔤 Interpreted via keyword matching — verify the strategy explanation below.")
 
     # If market cap strategy, ensure historical shares are downloaded
-    if config.get("selection_method") == "top_n_market_cap":
-        if not dm.shares_history_loaded():
+    if config.get("selection_method") in ("top_n_market_cap", "top_n_market_cap_growth"):
+        if not getattr(dm, "shares_history_loaded", lambda: False)():
             with st.status("Downloading historical shares outstanding (one-time, ~2 min)…", expanded=True) as st_shares:
                 progress_bar2 = st.progress(0)
                 status_text2 = st.empty()

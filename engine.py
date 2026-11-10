@@ -539,6 +539,22 @@ def run_backtest(config: dict, dm: DataManager) -> dict:
             ranked = [t for t, _ in sorted(caps.items(), key=lambda x: x[1], reverse=True)]
             selected = _dedup_tickers(ranked, n)
 
+        elif method == "top_n_market_cap_growth":
+            # Rank by % change in market cap over the lookback window
+            lookback_year = buy_date.year - max(1, lookback_months // 12)
+            caps_now = dm.market_cap_proxy(list(universe), buy_date.year)
+            caps_then = dm.market_cap_proxy(list(universe), lookback_year)
+            growth = {
+                tk: (caps_now[tk] - caps_then[tk]) / caps_then[tk]
+                for tk in caps_now
+                if tk in caps_then and caps_then[tk] > 0
+            }
+            if not growth:
+                period_rows.append(_empty_period_row(period, portfolio_value))
+                continue
+            ranked = [t for t, _ in sorted(growth.items(), key=lambda x: x[1], reverse=True)]
+            selected = _dedup_tickers(ranked, n)
+
         elif method == "equal_weight_sp500":
             selected = ["SPY"]
 

@@ -86,22 +86,23 @@ def _get_free_models(key: str) -> list:
         )
         if r.ok:
             all_models = r.json().get("data", [])
-            # only instruction-following models (skip base/embedding/vision-only)
-            _skip = ("embed", "base", "vision", "vl", "coder", "code", "math", "rerank")
+            # only exclude clearly non-chat models
+            _skip = ("embed", "rerank")
             free = [
                 m["id"] for m in all_models
                 if m["id"].endswith(":free")
                 and not any(s in m["id"].lower() for s in _skip)
-                and ("instruct" in m["id"].lower() or "chat" in m["id"].lower()
-                     or "llama" in m["id"].lower() or "qwen" in m["id"].lower()
-                     or "mistral" in m["id"].lower() or "gemma" in m["id"].lower())
             ]
-            ranked = sorted(free, key=lambda x: (
-                "llama" not in x,
-                "70b" not in x and "8b" not in x,
-                x,
-            ))
-            _openrouter_free_models_cache = ranked[:6] if ranked else free[:6]
+            # prefer larger instruction-following models
+            def _rank(mid):
+                m = mid.lower()
+                return (
+                    "llama" not in m and "qwen" not in m and "mistral" not in m and "deepseek" not in m,
+                    "70b" not in m and "72b" not in m and "32b" not in m and "8b" not in m,
+                    m,
+                )
+            ranked = sorted(free, key=_rank)
+            _openrouter_free_models_cache = ranked[:12]
             return _openrouter_free_models_cache
     except Exception:
         pass
@@ -120,6 +121,7 @@ def _call_openrouter(scenario: str, initial_capital: float, start_year: int) -> 
     }
     models = _get_free_models(key)
     errors = []
+    rate_limited = 0
     for model in models:
         try:
             r = _req.post(
@@ -136,6 +138,10 @@ def _call_openrouter(scenario: str, initial_capital: float, start_year: int) -> 
                 },
                 timeout=25,
             )
+            if r.status_code == 429:
+                rate_limited += 1
+                errors.append(f"{model}: rate limited")
+                continue
             if not r.ok:
                 errors.append(f"{model}: HTTP {r.status_code}")
                 continue
@@ -153,7 +159,11 @@ def _call_openrouter(scenario: str, initial_capital: float, start_year: int) -> 
             errors.append(f"{model}: bad JSON ({e})")
         except Exception as e:
             errors.append(f"{model}: {e}")
-    raise Exception("All models failed — " + "; ".join(errors[:4]))
+    # if everything was rate-limited, clear cache so next call re-fetches fresh model list
+    if rate_limited == len(models):
+        global _openrouter_free_models_cache
+        _openrouter_free_models_cache = []
+    raise Exception("All models failed — " + "; ".join(errors[:5]))
 
 
 def _call_groq(scenario: str, initial_capital: float, start_year: int) -> dict:

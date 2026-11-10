@@ -69,33 +69,29 @@ _GEMINI_MODELS = [
     "gemini-2.0-flash-lite",
     "gemini-1.5-flash",
     "gemini-1.5-flash-latest",
-    "gemini-flash-lite-latest",
 ]
 
 
 def _call_gemini(scenario: str, initial_capital: float, start_year: int) -> dict:
-    from google import genai
-    from google.genai import types
+    import requests as _req
+    key = os.environ["GEMINI_API_KEY"]
     user_msg = f"Scenario: {scenario}\nInitial capital: ${initial_capital:,.0f}\nStart year: {start_year}"
-
+    payload = {
+        "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+        "contents": [{"role": "user", "parts": [{"text": user_msg}]}],
+        "generationConfig": {"temperature": 0, "maxOutputTokens": 300},
+    }
     last_err = None
     for model in _GEMINI_MODELS:
-        for api_version in ("v1beta", "v1"):
+        for version in ("v1beta", "v1"):
+            url = (
+                f"https://generativelanguage.googleapis.com/{version}"
+                f"/models/{model}:generateContent?key={key}"
+            )
             try:
-                client = genai.Client(
-                    api_key=os.environ["GEMINI_API_KEY"],
-                    http_options={"api_version": api_version},
-                )
-                resp = client.models.generate_content(
-                    model=model,
-                    contents=user_msg,
-                    config=types.GenerateContentConfig(
-                        system_instruction=SYSTEM_PROMPT,
-                        temperature=0,
-                        max_output_tokens=300,
-                    ),
-                )
-                raw = resp.text.strip()
+                r = _req.post(url, json=payload, timeout=15)
+                r.raise_for_status()
+                raw = r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
                 raw = re.sub(r"```(?:json)?", "", raw).strip("`").strip()
                 return json.loads(raw)
             except Exception as e:

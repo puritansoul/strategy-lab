@@ -390,7 +390,7 @@ if run_clicked and scenario_input.strip():
           <td style='padding:6px 12px;color:{_color(f"{ret_pct:+.1f}%")};text-align:right;font-weight:600;'>{ret_pct:+.1f}%</td>
           <td style='padding:6px 12px;color:{_color(f"{spy_pct:+.1f}%")};text-align:right;font-weight:600;'>{spy_pct:+.1f}%</td>
           <td style='padding:6px 12px;color:{_color(f"{delta:+.1f}pp")};text-align:right;font-weight:600;'>{delta:+.1f}pp</td>
-          <td style='padding:6px 12px;text-align:right;'>${r['end_value']:,.0f}</td>
+          <td style='padding:6px 12px;text-align:right;font-weight:600;color:{"#1a7a3a" if spy_val is None or r["end_value"] >= spy_val else "#c0392b"};'>${r['end_value']:,.0f}</td>
           <td style='padding:6px 12px;text-align:right;'>{spy_val_str}</td>
         </tr>"""
 

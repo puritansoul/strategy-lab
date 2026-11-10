@@ -388,9 +388,12 @@ def _aggregate_to_annual(period_rows: List[dict]) -> List[dict]:
                 "ticker_returns": {},
                 "start_value": row["start_value"],
                 "end_value": row["end_value"],
+                "buy_date": row.get("buy"),
+                "sell_date": row.get("sell"),
             }
         else:
             by_year[year]["end_value"] = row["end_value"]
+            by_year[year]["sell_date"] = row.get("sell")  # last period's sell
         by_year[year]["tickers"].update(row.get("tickers", []))
         by_year[year]["ticker_returns"].update(row.get("ticker_returns", {}))
 
@@ -405,6 +408,8 @@ def _aggregate_to_annual(period_rows: List[dict]) -> List[dict]:
             "portfolio_return": (ev - sv) / sv if sv > 0 else 0.0,
             "start_value": sv,
             "end_value": ev,
+            "buy_date": d.get("buy_date"),
+            "sell_date": d.get("sell_date"),
         })
     return result
 

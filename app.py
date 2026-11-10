@@ -170,15 +170,17 @@ def _render_strategy_explanation(config: dict, result: dict, dm) -> None:
     }
     _freq_labels = {"annual": "once per year", "quarterly": "every quarter", "monthly": "every month"}
 
-    # Buy/sell timing description
-    if offset == 0:
-        buy_timing = "on January 1 each year"
-        sell_timing = "on December 31 (hold full year)"
+    # Buy/sell timing — derive from actual first period data
+    rows_for_desc = result.get("strategy_rows", [])
+    if rows_for_desc:
+        _f = rows_for_desc[0]
+        _bd = _f.get("buy_date") or (pd.Timestamp(f"{_f['year']}-01-01") + pd.DateOffset(months=offset))
+        _sd = _f.get("sell_date") or pd.Timestamp(f"{_f['year']}-12-31")
+        buy_timing = f"around {_bd.strftime('%B %d')} each {freq.rstrip('ly') if freq != 'monthly' else 'month'}"
+        sell_timing = f"around {_sd.strftime('%B %d')} (hold ~{int(round((_sd - _bd).days / 30))} months)"
     else:
-        from pandas.tseries.offsets import DateOffset
-        example_buy = pd.Timestamp("2001-01-01") + DateOffset(months=offset)
-        buy_timing = f"on {example_buy.strftime('%B 1')} each year (after {offset}-month delay)"
-        sell_timing = "on December 31 (hold remaining year)"
+        buy_timing = "start of each period"
+        sell_timing = "end of each period"
 
     col1, col2 = st.columns(2)
     with col1:
@@ -203,9 +205,9 @@ def _render_strategy_explanation(config: dict, result: dict, dm) -> None:
 
         first = rows[0]
         year = first["year"]
-        buy_date = pd.Timestamp(f"{year}-01-01") + pd.DateOffset(months=offset)
+        buy_date = first.get("buy_date") or (pd.Timestamp(f"{year}-01-01") + pd.DateOffset(months=offset))
+        sell_date = first.get("sell_date") or pd.Timestamp(f"{year}-12-31")
         sel_start = buy_date - pd.DateOffset(months=lb)
-        sell_date = pd.Timestamp(f"{year}-12-31")
         universe = dm.members_at_date(buy_date)
 
         st.markdown(f"**Concrete example: {year}**")

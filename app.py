@@ -421,7 +421,7 @@ if run_clicked and scenario_input.strip():
 
     # -- Strategy config debug (expander) --
     with st.expander("Strategy config (what the AI interpreted)"):
-        st.json(config)
+        st.json({k: v for k, v in config.items() if not k.startswith("_")})
 
 elif run_clicked:
     st.warning("Please enter a scenario first.")

@@ -94,6 +94,7 @@ def _extract_json(text: str) -> str:
 
 
 _openrouter_free_models_cache = []
+_model_empty_strikes = {}  # model_id -> consecutive empty-content failures
 
 
 def _parse_params_b(model_id: str) -> float:
@@ -145,9 +146,13 @@ def _call_openrouter(scenario: str, initial_capital: float, start_year: int) -> 
         "HTTP-Referer": "https://strategy-lab.streamlit.app",
         "X-Title": "Strategy Lab",
     }
-    models = _get_free_models(key)
-    if not models:
+    all_models = _get_free_models(key)
+    if not all_models:
         raise Exception("No free models available on OpenRouter right now — try again shortly.")
+    # Skip models with 2+ consecutive empty-content failures this session
+    models = [m for m in all_models if _model_empty_strikes.get(m, 0) < 2]
+    if not models:
+        models = all_models  # reset if everything is struck out
     errors = []
     rate_limited = 0
     for model in models:
@@ -179,12 +184,15 @@ def _call_openrouter(scenario: str, initial_capital: float, start_year: int) -> 
                 errors.append(f"{model}: malformed response")
                 continue
             if not raw or not isinstance(raw, str):
+                _model_empty_strikes[model] = _model_empty_strikes.get(model, 0) + 1
                 errors.append(f"{model}: empty content")
                 continue
             raw = _extract_json(raw)
             if not raw:
+                _model_empty_strikes[model] = _model_empty_strikes.get(model, 0) + 1
                 errors.append(f"{model}: no JSON found in response")
                 continue
+            _model_empty_strikes[model] = 0  # reset on success
             return json.loads(raw)
         except json.JSONDecodeError as e:
             errors.append(f"{model}: bad JSON ({e})")

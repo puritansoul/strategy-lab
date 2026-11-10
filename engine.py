@@ -260,12 +260,23 @@ class DataManager:
             return None
         return float((series.iloc[-1] - series.iloc[0]) / series.iloc[0])
 
+    def return_between(self, ticker: str, start_date: str, end_date: str) -> Optional[float]:
+        p = self.prices()
+        if ticker not in p.columns:
+            return None
+        series = p[ticker][start_date:end_date].dropna()
+        if len(series) < 3:
+            return None
+        return float((series.iloc[-1] - series.iloc[0]) / series.iloc[0])
+
+    def members_at_date(self, date: pd.Timestamp) -> set:
+        return _members_at(self.composition(), date)
+
     def period_momentum(self, tickers: List[str], year: int, months: int) -> Dict[str, float]:
-        """Return over the prior `months` months ending at start of `year`."""
         p = self.prices()
         end_dt = pd.Timestamp(f"{year}-01-01")
         start_dt = end_dt - pd.DateOffset(months=months)
-        out: dict[str, float] = {}
+        out: Dict[str, float] = {}
         for tk in tickers:
             if tk not in p.columns:
                 continue
@@ -311,73 +322,141 @@ def _dedup_tickers(ranked: list, n: int) -> list:
     return selected
 
 
-def run_backtest(config: dict, dm: DataManager) -> dict:
-    """
-    Execute a backtest from config.
+_MAX_DATE = pd.Timestamp("2026-11-09")
 
-    config keys:
-      selection_method: str   — how to pick stocks each period
-      n: int                  — number of stocks to hold (1 = concentrated)
-      tickers: list[str]      — for hold_ticker method
-      lookback_months: int    — for momentum methods (default 12)
-      rebalance: "annual"     — only annual supported for now
-      start_year: int
-      end_year: int           — 2026 = YTD Nov 9
-      initial_capital: float
-      weight: "equal"         — equal-weight across selected tickers
-    """
+
+def _generate_periods(
+    start_year: int,
+    end_year: int,
+    frequency: str,
+    buy_offset_months: int = 0,
+) -> List[Dict]:
+    """Generate (buy, sell, year) dicts for each rebalance period."""
+    periods: List[Dict] = []
+
+    if frequency in ("annual", None, ""):
+        for year in range(start_year, end_year + 1):
+            buy = pd.Timestamp(f"{year}-01-01") + pd.DateOffset(months=buy_offset_months)
+            if buy > _MAX_DATE:
+                break
+            sell = min(pd.Timestamp(f"{year}-12-31"), _MAX_DATE)
+            periods.append({"buy": buy, "sell": sell, "year": year})
+
+    elif frequency == "quarterly":
+        q_months = [1, 4, 7, 10]
+        for year in range(start_year, end_year + 1):
+            for i, qm in enumerate(q_months):
+                buy = pd.Timestamp(f"{year}-{qm:02d}-01") + pd.DateOffset(months=buy_offset_months)
+                if buy > _MAX_DATE:
+                    break
+                nqm = q_months[(i + 1) % 4]
+                ny = year if i < 3 else year + 1
+                sell = min(
+                    pd.Timestamp(f"{ny}-{nqm:02d}-01") - pd.Timedelta(days=1),
+                    _MAX_DATE,
+                )
+                if buy >= sell:
+                    continue
+                periods.append({"buy": buy, "sell": sell, "year": year, "quarter": i + 1})
+
+    elif frequency == "monthly":
+        for year in range(start_year, end_year + 1):
+            for month in range(1, 13):
+                buy = pd.Timestamp(f"{year}-{month:02d}-01") + pd.DateOffset(months=buy_offset_months)
+                if buy > _MAX_DATE:
+                    break
+                if month < 12:
+                    sell = pd.Timestamp(f"{year}-{month+1:02d}-01") - pd.Timedelta(days=1)
+                else:
+                    sell = pd.Timestamp(f"{year}-12-31")
+                sell = min(sell, _MAX_DATE)
+                if buy >= sell:
+                    continue
+                periods.append({"buy": buy, "sell": sell, "year": year, "month": month})
+
+    return periods
+
+
+def _aggregate_to_annual(period_rows: List[dict]) -> List[dict]:
+    by_year: Dict[int, dict] = {}
+    for row in period_rows:
+        year = row["year"]
+        if year not in by_year:
+            by_year[year] = {
+                "year": year,
+                "tickers": set(),
+                "ticker_returns": {},
+                "start_value": row["start_value"],
+                "end_value": row["end_value"],
+            }
+        else:
+            by_year[year]["end_value"] = row["end_value"]
+        by_year[year]["tickers"].update(row.get("tickers", []))
+        by_year[year]["ticker_returns"].update(row.get("ticker_returns", {}))
+
+    result = []
+    for year in sorted(by_year.keys()):
+        d = by_year[year]
+        sv, ev = d["start_value"], d["end_value"]
+        result.append({
+            "year": year,
+            "tickers": sorted(d["tickers"]),
+            "ticker_returns": d["ticker_returns"],
+            "portfolio_return": (ev - sv) / sv if sv > 0 else 0.0,
+            "start_value": sv,
+            "end_value": ev,
+        })
+    return result
+
+
+def run_backtest(config: dict, dm: DataManager) -> dict:
     method = config.get("selection_method", "top_n_prior_return")
     n = int(config.get("n", 1))
     start_year = int(config.get("start_year", 2002))
     end_year = int(config.get("end_year", 2026))
     capital = float(config.get("initial_capital", 10_000.0))
-    lookback_months = int(config.get("lookback_months", 12))
+    frequency = config.get("rebalance_frequency", "annual")
+    buy_offset = int(config.get("buy_offset_months", 0))
 
-    strategy_rows: List[dict] = []
+    # Default lookback: 6 months for momentum methods, 12 for everything else
+    default_lb = 6 if method in ("top_n_momentum", "bottom_n_momentum") else 12
+    lookback_months = int(config.get("selection_lookback_months", config.get("lookback_months", default_lb)))
+
+    periods = _generate_periods(start_year, end_year, frequency, buy_offset)
+
     portfolio_value = capital
+    period_rows: List[dict] = []
 
-    for year in range(start_year, end_year + 1):
+    for period in periods:
+        buy_date = period["buy"]
+        sell_date = period["sell"]
+        year = period["year"]
+        buy_str = str(buy_date.date())
+        sell_str = str(sell_date.date())
+        sel_end_str = buy_str
+        sel_start_str = str((buy_date - pd.DateOffset(months=lookback_months)).date())
+
+        universe = dm.members_at_date(buy_date)
+
         # ---- select tickers ----
         if method == "hold_ticker":
             selected = config.get("tickers", ["SPY"])
 
-        elif method in ("top_n_prior_return", "bottom_n_prior_return"):
-            prior = year - 1
-            universe = dm.members_year(prior)
-            rets = {tk: dm.year_return(tk, prior) for tk in universe}
+        elif method in ("top_n_prior_return", "bottom_n_prior_return",
+                        "top_n_momentum", "bottom_n_momentum"):
+            rets = {tk: dm.return_between(tk, sel_start_str, sel_end_str) for tk in universe}
             rets = {k: v for k, v in rets.items() if v is not None}
             if not rets:
-                strategy_rows.append(_empty_row(year, portfolio_value))
+                period_rows.append(_empty_period_row(period, portfolio_value))
                 continue
-            reverse = method == "top_n_prior_return"
+            reverse = method in ("top_n_prior_return", "top_n_momentum")
             ranked = [t for t, _ in sorted(rets.items(), key=lambda x: x[1], reverse=reverse)]
             selected = _dedup_tickers(ranked, n)
 
-        elif method == "top_n_january_return":
-            universe = dm.members_year(year)
-            jan_rets = {tk: dm.january_return(tk, year) for tk in universe}
-            jan_rets = {k: v for k, v in jan_rets.items() if v is not None}
-            if not jan_rets:
-                strategy_rows.append(_empty_row(year, portfolio_value))
-                continue
-            ranked = [t for t, _ in sorted(jan_rets.items(), key=lambda x: x[1], reverse=True)]
-            selected = _dedup_tickers(ranked, n)
-
-        elif method in ("top_n_momentum", "bottom_n_momentum"):
-            universe = dm.members_year(year)
-            moms = dm.period_momentum(list(universe), year, lookback_months)
-            if not moms:
-                strategy_rows.append(_empty_row(year, portfolio_value))
-                continue
-            reverse = method == "top_n_momentum"
-            ranked = [t for t, _ in sorted(moms.items(), key=lambda x: x[1], reverse=reverse)]
-            selected = _dedup_tickers(ranked, n)
-
         elif method == "top_n_market_cap":
-            universe = dm.members_year(year)
             caps = dm.market_cap_proxy(list(universe), year)
             if not caps:
-                strategy_rows.append(_empty_row(year, portfolio_value))
+                period_rows.append(_empty_period_row(period, portfolio_value))
                 continue
             ranked = [t for t, _ in sorted(caps.items(), key=lambda x: x[1], reverse=True)]
             selected = _dedup_tickers(ranked, n)
@@ -391,32 +470,31 @@ def run_backtest(config: dict, dm: DataManager) -> dict:
         else:
             selected = ["SPY"]
 
-        # ---- compute returns for selected tickers ----
-        if method == "top_n_january_return":
-            ticker_rets = [(tk, dm.year_return_from_month(tk, year, 2)) for tk in selected]
-        else:
-            ticker_rets = [(tk, dm.year_return(tk, year)) for tk in selected]
+        # ---- holding period returns ----
+        ticker_rets = [(tk, dm.return_between(tk, buy_str, sell_str)) for tk in selected]
         ticker_rets = [(tk, r) for tk, r in ticker_rets if r is not None]
 
         if not ticker_rets:
-            strategy_rows.append(_empty_row(year, portfolio_value))
+            period_rows.append(_empty_period_row(period, portfolio_value))
             continue
 
         avg_ret = float(np.mean([r for _, r in ticker_rets]))
         start_val = portfolio_value
         portfolio_value *= 1 + avg_ret
 
-        strategy_rows.append({
-            "year": year,
+        period_rows.append({
+            **period,
             "tickers": [tk for tk, _ in ticker_rets],
             "ticker_returns": {tk: r for tk, r in ticker_rets},
-            "portfolio_return": avg_ret,
+            "period_return": avg_ret,
             "start_value": start_val,
             "end_value": portfolio_value,
         })
 
-    # ---- SPY benchmark (same period) ----
-    spy_cap = float(config.get("initial_capital", 10_000.0))
+    strategy_rows = _aggregate_to_annual(period_rows)
+
+    # ---- SPY benchmark ----
+    spy_cap = capital
     spy_rows: List[dict] = []
     for year in range(start_year, end_year + 1):
         r = dm.year_return("SPY", year)
@@ -424,7 +502,7 @@ def run_backtest(config: dict, dm: DataManager) -> dict:
             spy_cap *= 1 + r
             spy_rows.append({"year": year, "return": r, "value": spy_cap})
 
-    init = float(config.get("initial_capital", 10_000.0))
+    init = capital
     return {
         "strategy_rows": strategy_rows,
         "spy_rows": spy_rows,
@@ -437,12 +515,12 @@ def run_backtest(config: dict, dm: DataManager) -> dict:
     }
 
 
-def _empty_row(year: int, value: float) -> dict:
+def _empty_period_row(period: dict, value: float) -> dict:
     return {
-        "year": year,
+        **period,
         "tickers": [],
         "ticker_returns": {},
-        "portfolio_return": 0.0,
+        "period_return": 0.0,
         "start_value": value,
         "end_value": value,
     }

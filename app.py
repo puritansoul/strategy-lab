@@ -260,11 +260,7 @@ if run_clicked and scenario_input.strip():
             st.error(f"Could not interpret scenario: {e}")
             st.stop()
         if config.get("_interpreter") == "rule-based":
-            err = config.get("_interpreter_error", "")
-            if err:
-                st.caption(f"⚠️ AI interpreter failed: {err}")
-            else:
-                st.caption("⚠️ Using rule-based interpreter — add a free Gemini key for better accuracy.")
+            st.caption("🔤 Interpreted via keyword matching — verify the strategy explanation below.")
 
     # If market cap strategy and shares not cached yet, download now
     if config.get("selection_method") == "top_n_market_cap" and not dm.shares_loaded():

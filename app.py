@@ -21,6 +21,7 @@ for _key in ("OPENROUTER_API_KEY", "GROQ_API_KEY", "ANTHROPIC_API_KEY"):
 
 from engine import DataManager, run_backtest
 from interpreter import interpret
+from persistence import load_backtests, save_backtest, delete_backtest, delete_all_backtests
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -85,7 +86,7 @@ st.caption("Describe any investment scenario in plain English — see 25 years o
 # ---------------------------------------------------------------------------
 
 if "saved_backtests" not in st.session_state:
-    st.session_state["saved_backtests"] = []
+    st.session_state["saved_backtests"] = load_backtests()
 
 with st.sidebar:
 
@@ -111,6 +112,9 @@ with st.sidebar:
         st.session_state["_cmp_checked"] = _checked_indices
 
         if _to_delete is not None:
+            _entry = st.session_state["saved_backtests"][_to_delete]
+            if "_id" in _entry:
+                delete_backtest(_entry["_id"])
             st.session_state["saved_backtests"].pop(_to_delete)
             st.session_state["_cmp_checked"] = [
                 i for i in st.session_state["_cmp_checked"] if i != _to_delete
@@ -127,6 +131,7 @@ with st.sidebar:
 
         if len(_saved) > 1:
             if st.button("🗑 Clear all", key="sidebar_clear_all"):
+                delete_all_backtests()
                 st.session_state["saved_backtests"] = []
                 st.session_state["_cmp_checked"] = []
                 st.session_state["_compare_indices"] = []
@@ -138,7 +143,7 @@ with st.sidebar:
 # Data loading
 # ---------------------------------------------------------------------------
 
-_DM_VERSION = "3"  # bump when DataManager API changes to force cache invalidation
+_DM_VERSION = "4"  # bump when DataManager API changes to force cache invalidation
 
 @st.cache_resource(show_spinner=False)
 def get_data_manager(version: str = _DM_VERSION):
@@ -159,6 +164,18 @@ if not dm.prices_loaded():
         status.update(label="Price data ready!", state="complete")
 else:
     dm.load_prices()  # loads from cache silently
+
+if not dm.shares_history_loaded():
+    with st.status("Building market cap history (one-time setup, ~8 min)…", expanded=True) as _sh_status:
+        _sh_bar = st.progress(0)
+        _sh_text = st.empty()
+
+        def _shares_progress(pct, msg):
+            _sh_bar.progress(pct)
+            _sh_text.text(msg)
+
+        dm.load_shares_history(_shares_progress)
+        _sh_status.update(label="Market cap history ready!", state="complete")
 
 # ---------------------------------------------------------------------------
 # Example scenarios
@@ -443,7 +460,7 @@ if _config is not None and _result is not None:
     if already_saved:
         st.caption("✅ Already saved")
     elif st.button("💾 Save this backtest", key=save_key):
-        st.session_state["saved_backtests"].append({
+        _new_entry = {
             "name":              config.get("display_name", ""),
             "final":             final,
             "spy_final":         spy_final,
@@ -459,7 +476,11 @@ if _config is not None and _result is not None:
             "spy_rows":          spy_rows,
             "start_year":        start_year,
             "initial_capital":   init,
-        })
+        }
+        _db_id = save_backtest(_new_entry)
+        if _db_id:
+            _new_entry["_id"] = _db_id
+        st.session_state["saved_backtests"].append(_new_entry)
         st.rerun()
 
     # -- Chart --

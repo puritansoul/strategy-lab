@@ -71,6 +71,9 @@ RULES:
 - "every quarter", "quarterly rotation", "rebalance quarterly" → rebalance_frequency=quarterly, selection_lookback_months=3
 - "every month", "monthly rotation", "rebalance monthly" → rebalance_frequency=monthly, selection_lookback_months=1
 - If user says "top 5" or "5 stocks" or "best 5" → n=5
+- If user says "all", "every", "each" with no number → n=999 (take all qualifying stocks)
+  - "all losers" → n=999 AND add filter {"field":"prior_return","op":"<","value":0}
+  - "all winners" → n=999 AND add filter {"field":"prior_return","op":">","value":0}
 - If no number mentioned → n=1
 - If start year not mentioned → use 2001
 - NOTE: "hold for 3 quarters" with "rebalance every year" means buy_offset_months=3 (buy in April after Q1 ends), NOT quarterly rebalancing
@@ -311,12 +314,15 @@ def _rule_based(scenario: str, initial_capital: float, start_year: int) -> dict:
         r'\bperforming\s+(\d+)\b',
         r'\b(\d+)\s+performing\b',
     ]
-    n = 1
-    for pat in _n_pats:
-        m = re.search(pat, text)
-        if m:
-            n = int(m.group(1))
-            break
+    # "all" → unlimited (999 = take every qualifying stock after filters)
+    _all_match = re.search(r'\b(all|every|each)\b', text) and not re.search(r'\b\d+\b', text)
+    n = 999 if _all_match else 1
+    if n == 1:
+        for pat in _n_pats:
+            m = re.search(pat, text)
+            if m:
+                n = int(m.group(1))
+                break
     if n == 1:
         for word, val in _WORD_NUMS.items():
             if re.search(rf'\b(?:top|best|worst|bottom|largest)\s+{word}\b', text):
@@ -418,6 +424,16 @@ def _rule_based(scenario: str, initial_capital: float, start_year: int) -> dict:
         _op_word = _price_pat.group(1)
         _op = ">" if _op_word in ("above", "over", ">", "greater than", "more than") else "<"
         filters.append({"field": "price", "op": _op, "value": float(_price_pat.group(2))})
+
+    # When "all losers/winners" is used (n=999), add implicit return direction filter
+    # so only stocks that actually lost/gained are included — not just ranked last/first.
+    if n == 999:
+        has_return_filter = any(f.get("field") == "prior_return" for f in filters)
+        if not has_return_filter:
+            if re.search(r'\b(worst|loser|losers|lost|loss|declined|fell|dropped|down|negative)\b', text):
+                filters.append({"field": "prior_return", "op": "<", "value": 0})
+            elif re.search(r'\b(best|winner|winners|gained|rose|up|positive|returned)\b', text):
+                filters.append({"field": "prior_return", "op": ">", "value": 0})
 
     config["filters"] = filters
 

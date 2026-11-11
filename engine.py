@@ -370,7 +370,10 @@ def _apply_filters(
 
 
 def _dedup_tickers(ranked: list, n: int) -> list:
-    """Pick top n tickers, skipping duplicates from the same company."""
+    """Pick top n tickers, skipping duplicates from the same company.
+    n=999 means take all (used when user says 'all losers/winners').
+    """
+    unlimited = n >= 999
     seen_companies: set = set()
     selected = []
     for tk in ranked:
@@ -379,7 +382,7 @@ def _dedup_tickers(ranked: list, n: int) -> list:
             continue
         seen_companies.add(canonical)
         selected.append(tk)
-        if len(selected) == n:
+        if not unlimited and len(selected) == n:
             break
     return selected
 

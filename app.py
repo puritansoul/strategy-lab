@@ -585,58 +585,53 @@ if _config is not None and _result is not None:
         st.json({k: v for k, v in config.items() if not k.startswith("_")})
 
 # ---------------------------------------------------------------------------
-# Comparison view — driven by sidebar checkboxes + Compare button
+# Comparison popup — triggered by sidebar Compare button
 # ---------------------------------------------------------------------------
 
-saved = st.session_state.get("saved_backtests", [])
-_cmp_indices = st.session_state.get("_compare_indices", [])
-chosen = [saved[i] for i in _cmp_indices if i < len(saved)]
-chosen_labels = [s["name"][:45] for s in chosen]
-
-if len(chosen) >= 2:
-    st.divider()
-    st.subheader("Side-by-side comparison")
-
-    # Metric comparison table
+@st.dialog("Strategy Comparison", width="large")
+def _show_compare_dialog(chosen, chosen_labels):
     _metrics = [
         ("Final Portfolio Value", lambda s: f"${s['final']:,.0f}"),
         ("Total ROI",             lambda s: f"{s['total_roi']*100:+.1f}%"),
         ("S&P 500 Final Value",   lambda s: f"${s['spy_final']:,.0f}"),
         ("S&P 500 ROI",           lambda s: f"{s['spy_roi']*100:+.1f}%"),
         ("Years Beat S&P",        lambda s: f"{s['years_beat']}/{s['total_years']} ({s['years_beat']/s['total_years']*100:.0f}%)"),
-        ("Longest Losing Streak", lambda s: f"{s['max_behind']} yr{'s' if s['max_behind']!=1 else ''}"),
+        ("Max Losing Streak",     lambda s: f"{s['max_behind']} yr{'s' if s['max_behind']!=1 else ''}"),
         ("Portfolio Low",         lambda s: f"${s['port_min']:,.0f}"),
         ("S&P Low",               lambda s: f"${s['spy_min']:,.0f}"),
     ]
 
-    _hdr = "".join(f"<th style='text-align:right;padding:8px 12px;'>{lbl[:40]}</th>" for lbl in chosen_labels)
+    _hdr = "".join(
+        f"<th style='text-align:right;padding:8px 14px;max-width:160px;'>{lbl}</th>"
+        for lbl in chosen_labels
+    )
     _cmp_rows = ""
     for _label, _fn in _metrics:
         _vals = [_fn(s) for s in chosen]
-        _cmp_rows += f"<tr><td style='padding:6px 12px;font-weight:600;'>{_label}</td>"
+        _cmp_rows += f"<tr><td style='padding:7px 14px;font-weight:600;white-space:nowrap;'>{_label}</td>"
         for v in _vals:
-            _cmp_rows += f"<td style='padding:6px 12px;text-align:right;'>{v}</td>"
+            _cmp_rows += f"<td style='padding:7px 14px;text-align:right;'>{v}</td>"
         _cmp_rows += "</tr>"
 
     st.markdown(f"""
-    <style>.saved-table{{border-collapse:collapse;width:100%;font-size:0.91em;}}
-    .saved-table th{{font-weight:600;padding:8px 12px;border-bottom:2px solid #ddd;text-align:left;}}
-    .saved-table td{{border-bottom:1px solid #eee;}}
-    .saved-table tr:hover td{{background:rgba(0,0,0,0.03);}}</style>
-    <table class='saved-table'><thead><tr>
+    <style>
+    .cmp-table{{border-collapse:collapse;width:100%;font-size:0.93em;}}
+    .cmp-table th{{font-weight:600;padding:8px 14px;border-bottom:2px solid #ddd;text-align:left;}}
+    .cmp-table td{{border-bottom:1px solid #eee;}}
+    .cmp-table tr:hover td{{background:rgba(0,0,0,0.03);}}
+    </style>
+    <table class='cmp-table'><thead><tr>
       <th>Metric</th>{_hdr}
     </tr></thead><tbody>{_cmp_rows}</tbody></table>
     """, unsafe_allow_html=True)
 
-    # Overlay chart
     st.markdown("#### Portfolio value over time")
     _colors = ["#00e676", "#ff9800", "#e91e63"]
     fig_cmp = go.Figure()
     for i, s in enumerate(chosen):
-        _yrs = [r["year"] for r in s["strategy_rows"]]
-        _vals = [r["end_value"] for r in s["strategy_rows"]]
         fig_cmp.add_trace(go.Scatter(
-            x=_yrs, y=_vals,
+            x=[r["year"] for r in s["strategy_rows"]],
+            y=[r["end_value"] for r in s["strategy_rows"]],
             mode="lines+markers",
             name=s["name"][:40],
             line=dict(color=_colors[i], width=2.5),
@@ -651,8 +646,22 @@ if len(chosen) >= 2:
         hovertemplate="Year: %{x}<br>SPY: $%{y:,.0f}<extra></extra>",
     ))
     fig_cmp.update_layout(
-        template="plotly_dark", hovermode="x unified", height=420,
+        template="plotly_dark", hovermode="x unified", height=400,
         yaxis=dict(tickformat="$,.0f"),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(t=20),
     )
-    st.plotly_chart(fig_cmp, width="stretch")
+    st.plotly_chart(fig_cmp, use_container_width=True)
+
+    if st.button("Close", key="close_cmp_dialog"):
+        st.session_state["_compare_indices"] = []
+        st.rerun()
+
+
+saved = st.session_state.get("saved_backtests", [])
+_cmp_indices = st.session_state.get("_compare_indices", [])
+chosen = [saved[i] for i in _cmp_indices if i < len(saved)]
+chosen_labels = [s["name"] for s in chosen]
+
+if len(chosen) >= 2:
+    _show_compare_dialog(chosen, chosen_labels)

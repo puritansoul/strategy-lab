@@ -186,6 +186,28 @@ def _render_strategy_explanation(config: dict, result: dict, dm) -> None:
         buy_timing = "start of each period"
         sell_timing = "end of each period"
 
+    # Build filter description for display
+    def _fmt_filter(f):
+        field = f.get("field", "")
+        op = f.get("op", ">")
+        val = float(f.get("value", 0))
+        if field == "market_cap":
+            if val >= 1e12:
+                val_str = f"${val/1e12:.1f}T"
+            elif val >= 1e9:
+                val_str = f"${val/1e9:.0f}B"
+            else:
+                val_str = f"${val/1e6:.0f}M"
+            return f"Market cap {op} {val_str}"
+        if field == "price":
+            return f"Price {op} ${val:.0f}"
+        if field == "prior_return":
+            return f"Prior return {op} {val*100:.1f}%"
+        return f"{field} {op} {val}"
+
+    filters = config.get("filters", [])
+    filter_desc = " AND ".join(_fmt_filter(f) for f in filters) if filters else "None"
+
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("**Strategy parameters**")
@@ -193,6 +215,7 @@ def _render_strategy_explanation(config: dict, result: dict, dm) -> None:
 | Field | Value |
 |---|---|
 | Universe | S&P 500 members at time of purchase |
+| Filters | {filter_desc} |
 | Select | {_method_labels.get(method, method)} |
 | Lookback | {lb} month{'s' if lb != 1 else ''} before buy date |
 | Buy | {buy_timing} |

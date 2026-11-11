@@ -44,6 +44,18 @@ PARAMETERS:
 - end_year: last year (use 2026 for current). Default 2026.
 - initial_capital: starting $ (default 10000)
 - weight: always "equal"
+- filters: SQL-style WHERE conditions applied to narrow the universe BEFORE ranking. List of {"field", "op", "value"}.
+  Supported fields: "market_cap" (price × shares), "price" (stock price at buy date), "prior_return" (return over lookback)
+  Supported ops: ">", "<", ">=", "<=", "=", "!="
+  Examples:
+    "market cap > $10B"   → {"field":"market_cap","op":">","value":10000000000}
+    "large cap"           → {"field":"market_cap","op":">","value":10000000000}
+    "mega cap"            → {"field":"market_cap","op":">","value":100000000000}
+    "mid cap"             → [{"field":"market_cap","op":">","value":2000000000},{"field":"market_cap","op":"<","value":10000000000}]
+    "small cap"           → {"field":"market_cap","op":"<","value":2000000000}
+    "price above $50"     → {"field":"price","op":">","value":50}
+    "price below $20"     → {"field":"price","op":"<","value":20}
+  If no filter mentioned → filters: []
 
 RULES:
 - "best", "top", "winners", "best performing" → top_n_prior_return
@@ -66,10 +78,13 @@ RULES:
 IMPORTANT: Your entire response must be a single valid JSON object. No explanation, no markdown, no code fences, no extra text — just the raw JSON object starting with { and ending with }.
 
 Example — "buy top 5 Q1 performers, hold 3 quarters, rebalance annually":
-{"selection_method":"top_n_prior_return","n":5,"tickers":[],"rebalance_frequency":"annual","selection_lookback_months":3,"buy_offset_months":3,"start_year":2001,"end_year":2026,"initial_capital":10000,"weight":"equal","display_name":"Top 5 Q1 winners, hold Apr–Dec (annual)"}
+{"selection_method":"top_n_prior_return","n":5,"tickers":[],"rebalance_frequency":"annual","selection_lookback_months":3,"buy_offset_months":3,"hold_months":null,"filters":[],"start_year":2001,"end_year":2026,"initial_capital":10000,"weight":"equal","display_name":"Top 5 Q1 winners, hold Apr–Dec (annual)"}
 
-Example — default annual:
-{"selection_method":"top_n_prior_return","n":5,"tickers":[],"rebalance_frequency":"annual","selection_lookback_months":12,"buy_offset_months":0,"start_year":2001,"end_year":2026,"initial_capital":10000,"weight":"equal","display_name":"Top 5 prior-year winners (annual)"}
+Example — "buy the 5 worst performers with market cap > $10B":
+{"selection_method":"bottom_n_prior_return","n":5,"tickers":[],"rebalance_frequency":"annual","selection_lookback_months":12,"buy_offset_months":0,"hold_months":null,"filters":[{"field":"market_cap","op":">","value":10000000000}],"start_year":2001,"end_year":2026,"initial_capital":10000,"weight":"equal","display_name":"Bottom 5 prior-year losers, mktcap > $10B (annual)"}
+
+Example — default annual (no filters):
+{"selection_method":"top_n_prior_return","n":5,"tickers":[],"rebalance_frequency":"annual","selection_lookback_months":12,"buy_offset_months":0,"hold_months":null,"filters":[],"start_year":2001,"end_year":2026,"initial_capital":10000,"weight":"equal","display_name":"Top 5 prior-year winners (annual)"}
 """
 
 
@@ -371,6 +386,41 @@ def _rule_based(scenario: str, initial_capital: float, start_year: int) -> dict:
     else:
         config["selection_method"] = "top_n_prior_return"
 
+    # ---- filters (WHERE conditions) ----
+    filters = []
+
+    # Market cap: explicit dollar amount, e.g. "market cap > $10B", "over 5 billion"
+    _mcap_pat = re.search(
+        r'market.?cap\s*(?:above|over|greater than|>|more than|exceeding|of at least|>=)?\s*\$?\s*(\d+(?:\.\d+)?)\s*(b(?:illion)?|t(?:rillion)?|m(?:illion)?)\b',
+        text
+    )
+    if _mcap_pat:
+        _num = float(_mcap_pat.group(1))
+        _unit = _mcap_pat.group(2)[0]
+        _mult = {"b": 1e9, "t": 1e12, "m": 1e6}[_unit]
+        filters.append({"field": "market_cap", "op": ">", "value": _num * _mult})
+    elif re.search(r'\bmega.?cap\b', text):
+        filters.append({"field": "market_cap", "op": ">", "value": 100_000_000_000})
+    elif re.search(r'\blarge.?cap\b', text):
+        filters.append({"field": "market_cap", "op": ">", "value": 10_000_000_000})
+    elif re.search(r'\bmid.?cap\b', text):
+        filters.append({"field": "market_cap", "op": ">", "value": 2_000_000_000})
+        filters.append({"field": "market_cap", "op": "<", "value": 10_000_000_000})
+    elif re.search(r'\bsmall.?cap\b', text):
+        filters.append({"field": "market_cap", "op": "<", "value": 2_000_000_000})
+
+    # Price filter: "price above $50", "stock price > 100", "price below $20"
+    _price_pat = re.search(
+        r'(?:stock\s+)?price\s*(above|over|>|greater than|more than|below|under|<|less than)\s*\$?\s*(\d+(?:\.\d+)?)',
+        text
+    )
+    if _price_pat:
+        _op_word = _price_pat.group(1)
+        _op = ">" if _op_word in ("above", "over", ">", "greater than", "more than") else "<"
+        filters.append({"field": "price", "op": _op, "value": float(_price_pat.group(2))})
+
+    config["filters"] = filters
+
     # ---- hold_months ----
     hm = re.search(r'\bhold(?:ing)?\s+(?:for\s+)?(\d+)\s*(month|quarter)', text)
     if hm:
@@ -409,7 +459,23 @@ def _rule_based(scenario: str, initial_capital: float, start_year: int) -> dict:
         "equal_weight_sp500":    "S&P 500 index (SPY)",
         "equal_weight_nasdaq":   "Nasdaq 100 index (QQQ)",
     }
-    config["display_name"] = _labels.get(config["selection_method"], scenario[:60])
+    _filter_suffix = ""
+    for _f in filters:
+        _fld = _f.get("field", "")
+        _fop = _f.get("op", ">")
+        _fval = float(_f.get("value", 0))
+        if _fld == "market_cap":
+            if _fval >= 1e12:
+                _fstr = f"${_fval/1e12:.1f}T"
+            elif _fval >= 1e9:
+                _fstr = f"${_fval/1e9:.0f}B"
+            else:
+                _fstr = f"${_fval/1e6:.0f}M"
+            _filter_suffix += f", mktcap {_fop} {_fstr}"
+        elif _fld == "price":
+            _filter_suffix += f", price {_fop} ${_fval:.0f}"
+
+    config["display_name"] = _labels.get(config["selection_method"], scenario[:60]) + _filter_suffix
     return config
 
 
@@ -458,6 +524,7 @@ def interpret(scenario: str, initial_capital: float = 10_000, start_year: int = 
     config.setdefault("rebalance_frequency", "annual")
     config.setdefault("selection_lookback_months", 12)
     config.setdefault("buy_offset_months", 0)
+    config.setdefault("filters", [])
     config.setdefault("end_year", 2026)
     config.setdefault("display_name", scenario[:80])
     config["initial_capital"] = initial_capital

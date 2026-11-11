@@ -309,6 +309,66 @@ _SAME_COMPANY: Dict[str, str] = {
 }
 
 
+def _compare(val, op: str, threshold: float) -> bool:
+    if val is None:
+        return False
+    if op == ">":  return val > threshold
+    if op == ">=": return val >= threshold
+    if op == "<":  return val < threshold
+    if op == "<=": return val <= threshold
+    if op in ("=", "=="): return val == threshold
+    if op == "!=": return val != threshold
+    return True
+
+
+def _apply_filters(
+    universe: set,
+    filters: list,
+    dm: "DataManager",
+    buy_date: pd.Timestamp,
+    lookback_months: int,
+) -> set:
+    """Narrow the universe with WHERE-style filters before ranking."""
+    if not filters:
+        return universe
+
+    remaining = set(universe)
+    buy_str = str(buy_date.date())
+    sel_start_str = str((buy_date - pd.DateOffset(months=lookback_months)).date())
+
+    _caps = None
+    _prices_map = None
+    _returns_map = None
+
+    for f in filters:
+        field = f.get("field", "")
+        op = f.get("op", ">")
+        try:
+            threshold = float(f.get("value", 0))
+        except (TypeError, ValueError):
+            continue
+
+        if field == "market_cap":
+            if _caps is None:
+                _caps = dm.market_cap_proxy(list(remaining), buy_date.year)
+            remaining = {tk for tk in remaining if _compare(_caps.get(tk), op, threshold)}
+
+        elif field == "price":
+            if _prices_map is None:
+                _prices_map = {tk: dm.price_at(tk, buy_str) for tk in remaining}
+            remaining = {tk for tk in remaining if _compare(_prices_map.get(tk), op, threshold)}
+
+        elif field == "prior_return":
+            if _returns_map is None:
+                _returns_map = {
+                    tk: dm.return_between(tk, sel_start_str, buy_str)
+                    for tk in remaining
+                }
+            remaining = {tk for tk in remaining if _compare(_returns_map.get(tk), op, threshold)}
+
+    return remaining
+
+
 def _dedup_tickers(ranked: list, n: int) -> list:
     """Pick top n tickers, skipping duplicates from the same company."""
     seen_companies: set = set()
@@ -445,6 +505,11 @@ def run_backtest(config: dict, dm: DataManager) -> dict:
         sel_start_str = str((buy_date - pd.DateOffset(months=lookback_months)).date())
 
         universe = dm.members_at_date(buy_date)
+
+        # ---- apply WHERE filters ----
+        filters = config.get("filters", [])
+        if filters:
+            universe = _apply_filters(universe, filters, dm, buy_date, lookback_months)
 
         # ---- select tickers ----
         if method == "hold_ticker":

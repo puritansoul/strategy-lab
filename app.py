@@ -43,32 +43,33 @@ _has_groq = bool(_os.environ.get("GROQ_API_KEY"))
 _has_claude = bool(_os.environ.get("ANTHROPIC_API_KEY"))
 _ai_active = _has_or or _has_groq or _has_claude
 
-_tb1, _tb2, _tb3, _tb4 = st.columns([1.4, 1.6, 1.5, 2.5])
-with _tb1:
-    st.caption("Starting capital ($)")
-    initial_capital = st.number_input(
-        "Starting capital ($)", value=10_000, step=1_000, min_value=1_000,
-        label_visibility="collapsed",
-    )
-with _tb2:
-    st.caption(f"Start year")
-    start_year = st.slider(
-        "Start year", min_value=2001, max_value=2024, value=2001,
-        label_visibility="collapsed",
-    )
-with _tb3:
-    st.caption("AI interpreter")
-    if _ai_active:
-        keys_active = []
-        if _has_or: keys_active.append("OpenRouter")
-        if _has_groq: keys_active.append("Groq")
-        if _has_claude: keys_active.append("Claude")
-        st.markdown(f"🟢 **{', '.join(keys_active)}**")
-    else:
-        st.markdown("🟡 Rule-based only")
-with _tb4:
-    st.caption("Data sources")
-    st.caption("S&P 500 composition: fja05680/sp500 · Prices: yfinance")
+with st.expander("⚙️ Settings", expanded=False):
+    _tb1, _tb2, _tb3, _tb4 = st.columns([1.4, 1.6, 1.5, 2.5])
+    with _tb1:
+        st.caption("Starting capital ($)")
+        initial_capital = st.number_input(
+            "Starting capital ($)", value=10_000, step=1_000, min_value=1_000,
+            label_visibility="collapsed",
+        )
+    with _tb2:
+        st.caption("Start year")
+        start_year = st.slider(
+            "Start year", min_value=2001, max_value=2024, value=2001,
+            label_visibility="collapsed",
+        )
+    with _tb3:
+        st.caption("AI interpreter")
+        if _ai_active:
+            keys_active = []
+            if _has_or: keys_active.append("OpenRouter")
+            if _has_groq: keys_active.append("Groq")
+            if _has_claude: keys_active.append("Claude")
+            st.markdown(f"🟢 **{', '.join(keys_active)}**")
+        else:
+            st.markdown("🟡 Rule-based only")
+    with _tb4:
+        st.caption("Data sources")
+        st.caption("S&P 500 composition: fja05680/sp500 · Prices: yfinance")
 
 st.divider()
 

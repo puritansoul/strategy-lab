@@ -182,13 +182,123 @@ class DataManager:
             return None
         return float(slice_.iloc[0])
 
-    def shares_cache(self) -> Dict[str, float]:
-        """Download shares outstanding for all tickers once and cache to JSON.
+    # -- historical shares outstanding --
 
-        Uses current shares via yfinance fast_info (reasonable for historical
-        ranking since shares don't change dramatically for established companies).
-        Downloads in parallel — ~60s for 1000 tickers, then instant from cache.
+    _SHARES_YEARS = list(range(2001, 2027))
+
+    def shares_history_loaded(self) -> bool:
+        return (DATA_DIR / "shares_history.parquet").exists()
+
+    def _shares_history_df(self) -> Optional[pd.DataFrame]:
+        if not hasattr(self, "_sh_cache"):
+            cache = DATA_DIR / "shares_history.parquet"
+            self._sh_cache = pd.read_parquet(cache) if cache.exists() else None
+        return self._sh_cache
+
+    def load_shares_history(self, progress_fn=None) -> None:
+        """Download year-start shares outstanding for every ticker via SEC EDGAR XBRL API.
+
+        Uses CommonStockSharesOutstanding from 10-K/10-Q filings.
+        No API key required. Rate-limited to 8 req/s to respect SEC guidelines.
+        ~2 min on first run, then instant from cache.
         """
+        cache = DATA_DIR / "shares_history.parquet"
+        if cache.exists():
+            return
+
+        prices = self.prices()
+        tickers = [tk for tk in prices.columns if tk not in ("SPY", "QQQ")]
+        years = self._SHARES_YEARS
+
+        # Step 1: fetch ticker → CIK mapping from SEC
+        if progress_fn:
+            progress_fn(0, "Fetching SEC ticker→CIK map…")
+        try:
+            r = requests.get(
+                "https://www.sec.gov/files/company_tickers.json",
+                headers={"User-Agent": "strategy-lab research@example.com"},
+                timeout=30,
+            )
+            r.raise_for_status()
+            cik_data = r.json()
+            ticker_to_cik: Dict[str, int] = {
+                v["ticker"].upper(): v["cik_str"]
+                for v in cik_data.values()
+            }
+        except Exception:
+            ticker_to_cik = {}
+
+        result: Dict[str, Dict[int, float]] = {}
+        total = len(tickers)
+        done = 0
+        import time as _time
+
+        def fetch_one(tk: str):
+            cik = ticker_to_cik.get(tk.upper())
+            if not cik:
+                return tk, None
+            try:
+                url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{int(cik):010d}.json"
+                resp = requests.get(
+                    url,
+                    headers={"User-Agent": "strategy-lab research@example.com"},
+                    timeout=20,
+                )
+                if not resp.ok:
+                    return tk, None
+                facts = resp.json()
+                # CommonStockSharesOutstanding is the standard XBRL tag
+                units = (
+                    facts.get("facts", {})
+                         .get("us-gaap", {})
+                         .get("CommonStockSharesOutstanding", {})
+                         .get("units", {})
+                         .get("shares", [])
+                )
+                if not units:
+                    return tk, None
+                # Keep only annual (10-K) and quarterly (10-Q) filings, deduplicate by end date
+                filings = [
+                    (pd.Timestamp(u["end"]), float(u["val"]))
+                    for u in units
+                    if u.get("form") in ("10-K", "10-Q") and u.get("val", 0) > 0
+                ]
+                if not filings:
+                    return tk, None
+                # Sort and deduplicate — keep latest filing per end date
+                seen: Dict[pd.Timestamp, float] = {}
+                for dt, val in sorted(filings, key=lambda x: x[0]):
+                    seen[dt] = val
+                series = sorted(seen.items())  # [(Timestamp, val), ...]
+
+                by_year: Dict[int, float] = {}
+                for yr in years:
+                    cutoff = pd.Timestamp(f"{yr}-01-01")
+                    before = [(dt, v) for dt, v in series if dt <= cutoff]
+                    if before:
+                        by_year[yr] = before[-1][1]
+                return tk, by_year if by_year else None
+            except Exception:
+                return tk, None
+
+        # SEC rate limit: max 10 req/s — use 8 workers with small sleep
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            futures = {ex.submit(fetch_one, tk): tk for tk in tickers}
+            for fut in as_completed(futures):
+                tk, by_year = fut.result()
+                if by_year:
+                    result[tk] = by_year
+                done += 1
+                if progress_fn and done % 25 == 0:
+                    progress_fn(done / total, f"Shares history: {done}/{total} tickers…")
+                _time.sleep(0.01)  # ~80 req/s peak → stays under SEC limit
+
+        df = pd.DataFrame(result, index=years, dtype=float)
+        df.to_parquet(cache)
+        self._sh_cache = df
+
+    def shares_cache(self) -> Dict[str, float]:
+        """Snapshot shares (current) — used as fallback when history unavailable."""
         cache_file = DATA_DIR / "shares.json"
         if cache_file.exists():
             with open(cache_file) as f:
@@ -198,7 +308,7 @@ class DataManager:
         tickers = list(prices.columns)
         result: Dict[str, float] = {}
 
-        def fetch_shares(tk: str) -> tuple:
+        def fetch_snap(tk: str) -> tuple:
             try:
                 s = yf.Ticker(tk).fast_info.shares
                 if s and float(s) > 0:
@@ -208,7 +318,7 @@ class DataManager:
             return tk, None
 
         with ThreadPoolExecutor(max_workers=20) as ex:
-            futures = {ex.submit(fetch_shares, tk): tk for tk in tickers}
+            futures = {ex.submit(fetch_snap, tk): tk for tk in tickers}
             for fut in as_completed(futures):
                 tk, shares = fut.result()
                 if shares:
@@ -216,29 +326,42 @@ class DataManager:
 
         with open(cache_file, "w") as f:
             json.dump(result, f)
-
         return result
 
     def shares_loaded(self) -> bool:
         return (DATA_DIR / "shares.json").exists()
 
     def market_cap_proxy(self, tickers: List[str], year: int) -> Dict[str, float]:
-        """Market cap = price × shares outstanding (snapshot).
+        """Market cap = price × shares outstanding.
 
-        Uses the shares.json snapshot (current shares) × historical price.
-        Share counts shift slowly enough that this is accurate for ranking.
+        Uses historical year-start shares (shares_history.parquet) when available,
+        falls back to current snapshot (shares.json) for any gaps.
+        Tickers with no shares data are omitted so market_cap filters treat them
+        as unknown (excluded) rather than using a nonsense value.
         """
         date_str = f"{year}-01-01"
-        snap_shares = self.shares_cache() if self.shares_loaded() else {}
+        hist = self._shares_history_df()
+        snap = self.shares_cache() if self.shares_loaded() else {}
 
         out: Dict[str, float] = {}
         for tk in tickers:
             price = self.price_at(tk, date_str)
             if not price:
                 continue
-            if tk in snap_shares:
-                out[tk] = price * snap_shares[tk]
-            # no shares data → omit ticker so market_cap filter treats it as unknown
+
+            shares = None
+            # 1. Historical (accurate)
+            if hist is not None and tk in hist.columns and year in hist.index:
+                v = hist.loc[year, tk]
+                if pd.notna(v) and v > 0:
+                    shares = float(v)
+            # 2. Snapshot fallback (less accurate for old years)
+            if shares is None and tk in snap:
+                shares = snap[tk]
+
+            if shares:
+                out[tk] = price * shares
+            # else omit — unknown market cap, filter will exclude
         return out
 
     def january_return(self, ticker: str, year: int) -> Optional[float]:

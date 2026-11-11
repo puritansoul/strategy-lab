@@ -2,10 +2,13 @@
 Scenario interpreter for Strategy Lab.
 
 Priority chain:
-  1. Google Gemini (free — gemini-1.5-flash) if GEMINI_API_KEY is set
-  2. Groq API (free — llama-3.3-70b) if GROQ_API_KEY is set
+  1. OpenRouter (free models, dynamic) if OPENROUTER_API_KEY is set
+  2. Groq API if GROQ_API_KEY is set
   3. Anthropic API if ANTHROPIC_API_KEY is set
-  4. Rule-based keyword parser (no key required, always available as fallback)
+  4. Rule-based fallback (last resort)
+
+LLM path uses a compact 9-field schema — much simpler output = more reliable
+on free models. A Python compiler expands it to the full engine config.
 """
 
 import json
@@ -15,90 +18,226 @@ from typing import Optional
 
 
 # ---------------------------------------------------------------------------
-# Shared LLM prompt
+# Compact LLM schema — what we ask the LLM to produce
 # ---------------------------------------------------------------------------
 
-SYSTEM_PROMPT = """You are a financial backtesting assistant.
-The user will describe an investment scenario in plain English.
-Your job is to translate it into a structured JSON config for a backtesting engine.
+SYSTEM_PROMPT = """You translate investment scenarios into a compact JSON config.
 
-SELECTION METHODS:
-- "top_n_prior_return"    : buy top N stocks by return over the lookback window (winners/momentum)
-- "bottom_n_prior_return" : buy bottom N stocks by return over the lookback window (contrarian)
-- "top_n_momentum"        : buy top N stocks by recent momentum (default 6-month lookback)
-- "bottom_n_momentum"     : buy worst N stocks by recent momentum
-- "top_n_market_cap"      : buy top N stocks by market cap (largest companies)
-- "top_n_market_cap_growth": buy top N stocks by % increase in market cap over lookback
-- "hold_ticker"           : simply hold specific named ticker(s) every period
-- "equal_weight_sp500"    : hold SPY (S&P 500 index fund)
-- "equal_weight_nasdaq"   : hold QQQ (Nasdaq 100 index fund)
+OUTPUT EXACTLY this JSON structure, no other text:
+{
+  "rank": "<see options>",
+  "n": <integer or "all">,
+  "filters": ["field op value", ...],
+  "rebalance": "annual|quarterly|monthly",
+  "lookback": "<N>m",
+  "hold": <months as integer or null>,
+  "buy_after_months": <0-11>,
+  "ticker": null or ["TICK"],
+  "index": null or "SPY" or "QQQ"
+}
 
-PARAMETERS:
-- n: number of stocks to hold (1 = concentrated, 5/10/20 = diversified)
-- tickers: list of ticker symbols — ONLY for hold_ticker method
-- rebalance_frequency: "annual" (default), "quarterly", or "monthly" — how often to re-pick stocks
-- selection_lookback_months: months to look back for ranking (default: 12 annual, 3 quarterly, 1 monthly)
-- buy_offset_months: months to delay buying after period start (default 0; use 1 for Jan effect, 3 to buy in April)
-- hold_months: how many months to hold each position before selling (default: null = full period length). Set explicitly when user specifies a different hold duration, e.g. "hold 9 months", "sell in December", "hold until next April" (=12 when buy is April)
-- start_year: first year to trade (2001-2024). Default 2001.
-- end_year: last year (use 2026 for current). Default 2026.
-- initial_capital: starting $ (default 10000)
-- weight: always "equal"
-- filters: SQL-style WHERE conditions applied to narrow the universe BEFORE ranking. List of {"field", "op", "value"}.
-  Supported fields: "market_cap" (price × shares), "price" (stock price at buy date), "prior_return" (return over lookback)
-  Supported ops: ">", "<", ">=", "<=", "=", "!="
-  Examples:
-    "market cap > $10B"   → {"field":"market_cap","op":">","value":10000000000}
-    "large cap"           → {"field":"market_cap","op":">","value":10000000000}
-    "mega cap"            → {"field":"market_cap","op":">","value":100000000000}
-    "mid cap"             → [{"field":"market_cap","op":">","value":2000000000},{"field":"market_cap","op":"<","value":10000000000}]
-    "small cap"           → {"field":"market_cap","op":"<","value":2000000000}
-    "price above $50"     → {"field":"price","op":">","value":50}
-    "price below $20"     → {"field":"price","op":"<","value":20}
-  If no filter mentioned → filters: []
+rank options (pick one):
+  "return_best"          — buy top performers (winners/momentum)
+  "return_worst"         — buy worst performers (contrarian/losers)
+  "momentum_best"        — buy top momentum stocks
+  "market_cap_best"      — buy largest companies
+  "market_cap_growth_best" — buy companies whose market cap grew most
 
-RULES:
-- "best", "top", "winners", "best performing" → top_n_prior_return
-- "worst", "bottom", "losers", "contrarian" → bottom_n_prior_return
-- "market cap", "market caps", "largest", "biggest", "most valuable" → top_n_market_cap
-- "market cap growth", "market cap increased", "grew most in market cap", "biggest market cap gain" → top_n_market_cap_growth
-- "momentum", "trending", "hot", "breakout" → top_n_momentum
-- "hold X", "buy X", "invest in X", "just X" (specific company) → hold_ticker
-- "S&P 500 index", "just SPY", "index fund" → equal_weight_sp500
-- "January effect", "best in January", "buy in February based on January" → top_n_prior_return + buy_offset_months=1 + selection_lookback_months=1
-- "first quarter", "Q1 performers", "buy in April based on Q1" → top_n_prior_return + buy_offset_months=3 + selection_lookback_months=3 + rebalance_frequency=annual
-- "second quarter", "Q2 performers" → top_n_prior_return + buy_offset_months=6 + selection_lookback_months=3 + rebalance_frequency=annual
-- "every quarter", "quarterly rotation", "rebalance quarterly" → rebalance_frequency=quarterly, selection_lookback_months=3
-- "every month", "monthly rotation", "rebalance monthly" → rebalance_frequency=monthly, selection_lookback_months=1
-- If user says "top 5" or "5 stocks" or "best 5" → n=5
-- If user says "all", "every", "each" with no number → n=999 (take all qualifying stocks)
-  - "all losers" → n=999 AND add filter {"field":"prior_return","op":"<","value":0}
-  - "all winners" → n=999 AND add filter {"field":"prior_return","op":">","value":0}
-- If no number mentioned → n=1
-- If start year not mentioned → use 2001
-- NOTE: "hold for 3 quarters" with "rebalance every year" means buy_offset_months=3 (buy in April after Q1 ends), NOT quarterly rebalancing
+filters — list of strings, each: "field op value"
+  field: market_cap | price | return
+  op:    > < >= <=
+  value: number with optional suffix B/T/M (e.g. 100B, 2.5T, 500M, 50)
+  e.g. "market_cap > 100B", "price > 50", "return < 0"
+  Use [] if no filter.
 
-IMPORTANT: Your entire response must be a single valid JSON object. No explanation, no markdown, no code fences, no extra text — just the raw JSON object starting with { and ending with }.
+n: how many stocks (integer). Use "all" only when user says all/every/each.
 
-Example — "buy top 5 Q1 performers, hold 3 quarters, rebalance annually":
-{"selection_method":"top_n_prior_return","n":5,"tickers":[],"rebalance_frequency":"annual","selection_lookback_months":3,"buy_offset_months":3,"hold_months":null,"filters":[],"start_year":2001,"end_year":2026,"initial_capital":10000,"weight":"equal","display_name":"Top 5 Q1 winners, hold Apr–Dec (annual)"}
+lookback: how far back to measure performance. Default "12m".
+  "3m" = 3 months, "6m" = 6 months, "12m" = 1 year.
 
-Example — "buy the 5 worst performers with market cap > $10B":
-{"selection_method":"bottom_n_prior_return","n":5,"tickers":[],"rebalance_frequency":"annual","selection_lookback_months":12,"buy_offset_months":0,"hold_months":null,"filters":[{"field":"market_cap","op":">","value":10000000000}],"start_year":2001,"end_year":2026,"initial_capital":10000,"weight":"equal","display_name":"Bottom 5 prior-year losers, mktcap > $10B (annual)"}
+hold: months to hold before selling. null = full period (default).
 
-Example — default annual (no filters):
-{"selection_method":"top_n_prior_return","n":5,"tickers":[],"rebalance_frequency":"annual","selection_lookback_months":12,"buy_offset_months":0,"hold_months":null,"filters":[],"start_year":2001,"end_year":2026,"initial_capital":10000,"weight":"equal","display_name":"Top 5 prior-year winners (annual)"}
+buy_after_months: months after Jan 1 to buy. 0=January, 3=April (after Q1), 1=February.
+
+ticker: only for "hold specific stock" strategies.
+index: "SPY" for S&P 500 index, "QQQ" for Nasdaq 100.
+
+EXAMPLES:
+"buy 5 best performers each year"
+{"rank":"return_best","n":5,"filters":[],"rebalance":"annual","lookback":"12m","hold":null,"buy_after_months":0,"ticker":null,"index":null}
+
+"buy all losers from last year with market cap above $100B"
+{"rank":"return_worst","n":"all","filters":["market_cap > 100B","return < 0"],"rebalance":"annual","lookback":"12m","hold":null,"buy_after_months":0,"ticker":null,"index":null}
+
+"top 5 Q1 performers, hold 3 quarters"
+{"rank":"return_best","n":5,"filters":[],"rebalance":"annual","lookback":"3m","hold":9,"buy_after_months":3,"ticker":null,"index":null}
+
+"hold NVDA"
+{"rank":"return_best","n":1,"filters":[],"rebalance":"annual","lookback":"12m","hold":null,"buy_after_months":0,"ticker":["NVDA"],"index":null}
+
+"top 10 momentum, large cap, quarterly"
+{"rank":"momentum_best","n":10,"filters":["market_cap > 10B"],"rebalance":"quarterly","lookback":"6m","hold":null,"buy_after_months":0,"ticker":null,"index":null}
 """
 
 
+# ---------------------------------------------------------------------------
+# Python compiler: simple schema → full engine config
+# ---------------------------------------------------------------------------
+
+def _parse_value(val_str: str) -> Optional[float]:
+    """Parse '100B', '2.5T', '500M', '50' → float."""
+    s = val_str.strip().upper().replace("$", "").replace(",", "")
+    mult = 1.0
+    if s.endswith("T"):
+        mult = 1e12; s = s[:-1]
+    elif s.endswith("B"):
+        mult = 1e9; s = s[:-1]
+    elif s.endswith("M"):
+        mult = 1e6; s = s[:-1]
+    elif s.endswith("K"):
+        mult = 1e3; s = s[:-1]
+    try:
+        return float(s) * mult
+    except ValueError:
+        return None
+
+
+def _parse_filter(f_str: str) -> Optional[dict]:
+    """Parse 'market_cap > 100B' → {field, op, value}."""
+    m = re.match(r'(\w+)\s*(>=|<=|>|<|=|!=)\s*(.+)', f_str.strip())
+    if not m:
+        return None
+    field_raw, op, val_raw = m.group(1), m.group(2), m.group(3)
+    field_map = {
+        "market_cap": "market_cap",
+        "marketcap": "market_cap",
+        "price": "price",
+        "return": "prior_return",
+        "prior_return": "prior_return",
+        "momentum": "prior_return",
+    }
+    field = field_map.get(field_raw.lower())
+    if not field:
+        return None
+    value = _parse_value(val_raw)
+    if value is None:
+        return None
+    return {"field": field, "op": op, "value": value}
+
+
+def _parse_months(s) -> Optional[int]:
+    """Parse '12m', '3m', '1y', '2q', 9 → int months. None stays None."""
+    if s is None:
+        return None
+    if isinstance(s, (int, float)):
+        return int(s)
+    m = re.match(r'(\d+(?:\.\d+)?)\s*(m|mo|month|y|yr|year|q|quarter)', str(s).lower())
+    if not m:
+        try:
+            return int(s)
+        except (ValueError, TypeError):
+            return None
+    num, unit = float(m.group(1)), m.group(2)
+    if unit.startswith("y"):
+        return int(num * 12)
+    if unit.startswith("q"):
+        return int(num * 3)
+    return int(num)
+
+
+_RANK_TO_METHOD = {
+    "return_best":           "top_n_prior_return",
+    "return_worst":          "bottom_n_prior_return",
+    "momentum_best":         "top_n_momentum",
+    "momentum_worst":        "bottom_n_momentum",
+    "market_cap_best":       "top_n_market_cap",
+    "market_cap_growth_best":"top_n_market_cap_growth",
+}
+
+
+def _compile(simple: dict, initial_capital: float, start_year: int) -> dict:
+    """Compile the compact LLM schema into a full engine config."""
+    rank = simple.get("rank", "return_best")
+    n_raw = simple.get("n", 1)
+    n = 999 if str(n_raw).lower() == "all" else max(1, int(n_raw))
+
+    raw_filters = simple.get("filters") or []
+    filters = [pf for pf in (_parse_filter(f) for f in raw_filters) if pf]
+
+    lookback = _parse_months(simple.get("lookback", "12m")) or 12
+    hold = _parse_months(simple.get("hold"))  # None = full period
+
+    index = simple.get("index")
+    ticker = simple.get("ticker")
+
+    if index == "SPY":
+        method = "equal_weight_sp500"
+    elif index == "QQQ":
+        method = "equal_weight_nasdaq"
+    elif ticker:
+        method = "hold_ticker"
+    else:
+        method = _RANK_TO_METHOD.get(rank, "top_n_prior_return")
+
+    rebalance = simple.get("rebalance", "annual")
+    buy_after = int(simple.get("buy_after_months", 0) or 0)
+
+    # Auto-generate display name
+    n_str = "all" if n >= 999 else str(n)
+    _rank_labels = {
+        "return_best":            f"top {n_str} return",
+        "return_worst":           f"bottom {n_str} return (contrarian)",
+        "momentum_best":          f"top {n_str} momentum",
+        "momentum_worst":         f"bottom {n_str} momentum (laggards)",
+        "market_cap_best":        f"top {n_str} by market cap",
+        "market_cap_growth_best": f"top {n_str} by market cap growth",
+    }
+    if index:
+        base_name = f"Hold {index}"
+    elif ticker:
+        base_name = f"Hold {', '.join(ticker)}"
+    else:
+        base_name = _rank_labels.get(rank, rank)
+
+    filter_suffix = ""
+    for f_str in (raw_filters or []):
+        filter_suffix += f", {f_str}"
+
+    timing = ""
+    if buy_after:
+        import calendar
+        mo = calendar.month_abbr[buy_after + 1] if buy_after < 12 else "Dec"
+        timing = f", buy {mo}"
+    if hold:
+        timing += f", hold {hold}mo"
+
+    display_name = f"{base_name} ({rebalance}){timing}{filter_suffix}"
+
+    return {
+        "selection_method": method,
+        "n": n,
+        "tickers": list(ticker) if ticker else [],
+        "rebalance_frequency": rebalance,
+        "selection_lookback_months": lookback,
+        "buy_offset_months": buy_after,
+        "hold_months": hold,
+        "filters": filters,
+        "start_year": start_year,
+        "end_year": 2026,
+        "initial_capital": initial_capital,
+        "weight": "equal",
+        "display_name": display_name,
+    }
+
+
+# ---------------------------------------------------------------------------
+# JSON extraction helpers
+# ---------------------------------------------------------------------------
+
 def _extract_json(text: str) -> str:
-    """Extract the first valid JSON object from text that may contain reasoning or thinking tags."""
-    # Strip thinking/reasoning tags (Nemotron, DeepSeek-R1, etc.)
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
     text = re.sub(r"<reasoning>.*?</reasoning>", "", text, flags=re.DOTALL)
-    # Strip markdown fences
     text = re.sub(r"```(?:json)?", "", text).strip("`").strip()
-    # Find the outermost { ... } block
     start = text.find("{")
     if start == -1:
         return ""
@@ -113,14 +252,16 @@ def _extract_json(text: str) -> str:
     return ""
 
 
+# ---------------------------------------------------------------------------
+# OpenRouter
+# ---------------------------------------------------------------------------
+
 _openrouter_free_models_cache = []
-_model_empty_strikes = {}  # model_id -> consecutive empty-content failures
+_model_empty_strikes = {}
 
 
 def _parse_params_b(model_id: str) -> float:
-    """Extract parameter count in billions from a model ID string."""
-    import re as _re
-    m = _re.search(r'(\d+(?:\.\d+)?)\s*b(?:\b|_|-)', model_id.lower())
+    m = re.search(r'(\d+(?:\.\d+)?)\s*b(?:\b|_|-)', model_id.lower())
     return float(m.group(1)) if m else 0.0
 
 
@@ -145,9 +286,7 @@ def _get_free_models(key: str) -> list:
                 and "text" in m.get("architecture", {}).get("output_modalities", ["text"])
                 and m.get("architecture", {}).get("modality") != "image->text"
             ]
-            # skip tiny models (< 3B) — too unreliable for structured JSON output
             capable = [m for m in free if _parse_params_b(m["id"]) >= 3 or _parse_params_b(m["id"]) == 0]
-            # rank by parameter count descending; unknown size sorted last
             ranked = sorted(capable, key=lambda m: _parse_params_b(m["id"]), reverse=True)
             _openrouter_free_models_cache = [m["id"] for m in ranked[:10]]
             return _openrouter_free_models_cache
@@ -159,7 +298,7 @@ def _get_free_models(key: str) -> list:
 def _call_openrouter(scenario: str, initial_capital: float, start_year: int) -> dict:
     import requests as _req
     key = os.environ["OPENROUTER_API_KEY"]
-    user_msg = f"Scenario: {scenario}\nInitial capital: ${initial_capital:,.0f}\nStart year: {start_year}"
+    user_msg = f"Scenario: {scenario}\nInitial capital: ${initial_capital:,.0f}\nStart year: {start_year}\n\nReply with raw JSON only."
     headers = {
         "Authorization": f"Bearer {key}",
         "Content-Type": "application/json",
@@ -169,10 +308,9 @@ def _call_openrouter(scenario: str, initial_capital: float, start_year: int) -> 
     all_models = _get_free_models(key)
     if not all_models:
         raise Exception("No free models available on OpenRouter right now — try again shortly.")
-    # Skip models with 2+ consecutive empty-content failures this session
     models = [m for m in all_models if _model_empty_strikes.get(m, 0) < 2]
     if not models:
-        models = all_models  # reset if everything is struck out
+        models = all_models
     errors = []
     rate_limited = 0
     for model in models:
@@ -184,10 +322,10 @@ def _call_openrouter(scenario: str, initial_capital: float, start_year: int) -> 
                     "model": model,
                     "messages": [
                         {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": user_msg + "\n\nReply with raw JSON only."},
+                        {"role": "user", "content": user_msg},
                     ],
                     "temperature": 0,
-                    "max_tokens": 400,
+                    "max_tokens": 250,
                 },
                 timeout=25,
             )
@@ -210,15 +348,15 @@ def _call_openrouter(scenario: str, initial_capital: float, start_year: int) -> 
             raw = _extract_json(raw)
             if not raw:
                 _model_empty_strikes[model] = _model_empty_strikes.get(model, 0) + 1
-                errors.append(f"{model}: no JSON found in response")
+                errors.append(f"{model}: no JSON found")
                 continue
-            _model_empty_strikes[model] = 0  # reset on success
-            return json.loads(raw)
+            _model_empty_strikes[model] = 0
+            simple = json.loads(raw)
+            return _compile(simple, initial_capital, start_year)
         except json.JSONDecodeError as e:
             errors.append(f"{model}: bad JSON ({e})")
         except Exception as e:
             errors.append(f"{model}: {e}")
-    # if everything was rate-limited, clear cache so next call re-fetches fresh model list
     if rate_limited == len(models):
         global _openrouter_free_models_cache
         _openrouter_free_models_cache = []
@@ -236,11 +374,11 @@ def _call_groq(scenario: str, initial_capital: float, start_year: int) -> dict:
             {"role": "user", "content": user_msg},
         ],
         temperature=0,
-        max_tokens=300,
+        max_tokens=250,
     )
-    raw = resp.choices[0].message.content.strip()
-    raw = re.sub(r"```(?:json)?", "", raw).strip("`").strip()
-    return json.loads(raw)
+    raw = _extract_json(resp.choices[0].message.content.strip())
+    simple = json.loads(raw)
+    return _compile(simple, initial_capital, start_year)
 
 
 def _call_anthropic(scenario: str, initial_capital: float, start_year: int) -> dict:
@@ -249,24 +387,18 @@ def _call_anthropic(scenario: str, initial_capital: float, start_year: int) -> d
     user_msg = f"Scenario: {scenario}\nInitial capital: ${initial_capital:,.0f}\nStart year: {start_year}"
     msg = client.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=300,
+        max_tokens=250,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_msg}],
     )
-    raw = msg.content[0].text.strip()
-    raw = re.sub(r"```(?:json)?", "", raw).strip("`").strip()
-    return json.loads(raw)
+    raw = _extract_json(msg.content[0].text.strip())
+    simple = json.loads(raw)
+    return _compile(simple, initial_capital, start_year)
 
 
 # ---------------------------------------------------------------------------
-# Rule-based fallback
+# Rule-based fallback — minimal, only for obvious dead-simple cases
 # ---------------------------------------------------------------------------
-
-_WORD_NUMS = {
-    "one":1,"two":2,"three":3,"four":4,"five":5,
-    "six":6,"seven":7,"eight":8,"nine":9,"ten":10,
-    "fifteen":15,"twenty":20,"twenty-five":25,"fifty":50,
-}
 
 _COMPANY_TO_TICKER = {
     "apple":"AAPL","microsoft":"MSFT","google":"GOOGL","alphabet":"GOOGL",
@@ -284,215 +416,149 @@ _SKIP_WORDS = {
     "SPY","QQQ","USD","US","FOR","WITH","FROM","WHAT","HOW","IT","DO",
 }
 
+_WORD_NUMS = {
+    "one":1,"two":2,"three":3,"four":4,"five":5,"six":6,"seven":7,
+    "eight":8,"nine":9,"ten":10,"fifteen":15,"twenty":20,"fifty":50,
+}
+
 
 def _rule_based(scenario: str, initial_capital: float, start_year: int) -> dict:
+    """Minimal rule-based fallback — handles obvious patterns, defers rest to defaults."""
     text = scenario.lower().strip()
-    config = {
-        "selection_method": "top_n_prior_return",
+
+    simple = {
+        "rank": "return_best",
         "n": 1,
-        "tickers": [],
-        "rebalance_frequency": "annual",
-        "selection_lookback_months": 12,
-        "buy_offset_months": 0,
-        "start_year": start_year,
-        "end_year": 2026,
-        "initial_capital": initial_capital,
-        "weight": "equal",
-        "display_name": scenario[:80],
+        "filters": [],
+        "rebalance": "annual",
+        "lookback": "12m",
+        "hold": None,
+        "buy_after_months": 0,
+        "ticker": None,
+        "index": None,
     }
 
-    # ---- extract N ----
-    _n_pats = [
-        r'\b(?:top|best|worst|bottom)\s+(\d+)\b',
-        r'\b(\d+)\s+(?:top|best|worst|bottom)\b',
-        r'\b(\d+)\s+largest\b',
-        r'\b(\d+)\s+stocks?\b',
-        r'\b(\d+)\s+companies\b',
-        r'\b(\d+)\s+performers?\b',
-        r'\b(\d+)\s+positions?\b',
-        r'\b(\d+)\s+holdings?\b',
-        r'\bperforming\s+(\d+)\b',
-        r'\b(\d+)\s+performing\b',
-    ]
-    # "all" → unlimited (999 = take every qualifying stock after filters)
-    _all_match = re.search(r'\b(all|every|each)\b', text) and not re.search(r'\b\d+\b', text)
-    n = 999 if _all_match else 1
-    if n == 1:
-        for pat in _n_pats:
-            m = re.search(pat, text)
-            if m:
-                n = int(m.group(1))
-                break
-    if n == 1:
-        for word, val in _WORD_NUMS.items():
-            if re.search(rf'\b(?:top|best|worst|bottom|largest)\s+{word}\b', text):
-                n = val
-                break
-    config["n"] = n
+    # ---- index / specific ticker ----
+    if "SPY" in scenario or re.search(r'\b(s&p.?500.?index|just.*spy|index fund)\b', text):
+        simple["index"] = "SPY"
+        return _compile(simple, initial_capital, start_year)
+    if "QQQ" in scenario or re.search(r'\b(nasdaq.?100|qqq)\b', text):
+        simple["index"] = "QQQ"
+        return _compile(simple, initial_capital, start_year)
 
-    # ---- detect tickers / company names ----
     tickers_found = []
     for name, ticker in _COMPANY_TO_TICKER.items():
         if name in text and ticker not in tickers_found:
             tickers_found.append(ticker)
-    for t in re.findall(r'\b([A-Z]{1,5})\b', scenario):
+    for t in re.findall(r'\b([A-Z]{2,5})\b', scenario):
         if t not in _SKIP_WORDS and t not in tickers_found:
             tickers_found.append(t)
 
-    # ---- rebalance frequency ----
-    if re.search(r'\b(every month|monthly|each month|per month|month by month)\b', text):
-        config["rebalance_frequency"] = "monthly"
-        config["selection_lookback_months"] = 1
-    elif re.search(r'\b(every quarter|quarterly|each quarter|per quarter|quarter by quarter)\b', text):
-        # "rebalance every year" overrides "quarterly" if both appear
-        if not re.search(r'\b(every year|annually|each year|rebalanc.*year|year.*rebalanc)\b', text):
-            config["rebalance_frequency"] = "quarterly"
-            config["selection_lookback_months"] = 3
+    if re.search(r'\b(hold|held|just buy|just hold|invest in)\b', text) and tickers_found:
+        simple["ticker"] = tickers_found
+        simple["n"] = len(tickers_found)
+        return _compile(simple, initial_capital, start_year)
 
-    # ---- Quarter-based buy offset (annual rebalance, buy after a specific quarter) ----
-    # e.g. "top performers from first quarter, hold 3 quarters" → buy April, annual
-    if re.search(r'\b(first quarter|q1|quarter one)\b', text) and re.search(r'\b(hold|3 quarter|three quarter)\b', text):
-        config["rebalance_frequency"] = "annual"
-        config["selection_lookback_months"] = 3
-        config["buy_offset_months"] = 3
-    elif re.search(r'\b(second quarter|q2|quarter two)\b', text) and re.search(r'\b(hold|2 quarter|two quarter)\b', text):
-        config["rebalance_frequency"] = "annual"
-        config["selection_lookback_months"] = 3
-        config["buy_offset_months"] = 6
+    # ---- n ----
+    n = None
+    for pat in [
+        r'\b(?:top|best|worst|bottom)\s+(\d+)\b',
+        r'\b(\d+)\s+(?:top|best|worst|bottom|largest|stocks?|companies|performers?)\b',
+    ]:
+        m = re.search(pat, text)
+        if m:
+            n = int(m.group(1))
+            break
+    if n is None:
+        for word, val in _WORD_NUMS.items():
+            if re.search(rf'\b(?:top|best|worst|bottom|largest)\s+{word}\b', text):
+                n = val
+                break
+    if n is None and re.search(r'\b(all|every|each)\b', text) and not re.search(r'\b\d+\b', text):
+        n = 999
+    simple["n"] = n or 1
 
-    # ---- January effect (detect before general method) ----
-    if re.search(r'\b(january|jan\.?)\b', text) and re.search(r'\b(best|top|perform|winner|feb|february)\b', text):
-        config["selection_method"] = "top_n_prior_return"
-        config["buy_offset_months"] = 1
-        config["selection_lookback_months"] = 1
-    # ---- general selection method ----
-    elif re.search(r'\b(hold|held|keep|just buy|just hold|bought|invest in|put.*into)\b', text) and tickers_found:
-        config["selection_method"] = "hold_ticker"
-        config["tickers"] = tickers_found
-        config["n"] = len(tickers_found)
-    elif "SPY" in scenario or re.search(r'\b(s&p\s*500\s*index|just.*index|index fund)\b', text):
-        config["selection_method"] = "equal_weight_sp500"
-    elif "QQQ" in scenario or re.search(r'\b(nasdaq\s*100|qqq)\b', text):
-        config["selection_method"] = "equal_weight_nasdaq"
-    elif re.search(r'\b(worst|bottom|loser|losing|losers|loss|losses|contrarian|fallen|fell|dropped|declined|underperform|mean.?revert|bad|poor|laggard|laggards|dog|dogs)\b', text):
-        config["selection_method"] = "bottom_n_prior_return"
-    elif re.search(r'market.?cap.*(grew|grow|increas|gain|rose|jump|climb|most|biggest|highest).*(year|prior|previous|last)|'
-                   r'(grew|grow|increas|gain|rose|jump|climb).*(market.?cap)', text):
-        config["selection_method"] = "top_n_market_cap_growth"
-    elif re.search(r'\b(market.?caps?|largest|biggest|most valuable|mega.?cap)\b', text):
-        config["selection_method"] = "top_n_market_cap"
+    # ---- rank direction — check most specific first ----
+    if re.search(r'\b(worst|bottom|loser|losers|contrarian|fell|dropped|declined|underperform|dogs?)\b', text):
+        simple["rank"] = "return_worst"
+    elif re.search(r'market.?cap.*(grew|grow|increas|gain|rose|biggest).*(year|prior|last)|'
+                   r'(grew|grow|increas|gain|rose).*(market.?cap)', text):
+        simple["rank"] = "market_cap_growth_best"
     elif re.search(r'\b(momentum|trending|hot|breakout|relative strength)\b', text):
-        config["selection_method"] = "top_n_momentum"
-        if re.search(r'\b(3.?month|quarter|90.?day)\b', text):
-            config["selection_lookback_months"] = 3
-        elif re.search(r'\b(6.?month|half.?year|180.?day)\b', text):
-            config["selection_lookback_months"] = 6
-        else:
-            config["selection_lookback_months"] = 6
+        # momentum beats large-cap as the rank signal; large-cap becomes a filter below
+        simple["rank"] = "momentum_best"
+        simple["lookback"] = "6m"
+    elif re.search(r'\b(market.?caps?|largest|biggest|most valuable)\b', text) \
+            and not re.search(r'\b(best|top|winner|perform|return)\b', text):
+        # only use market_cap as rank when there's no return/performance signal
+        simple["rank"] = "market_cap_best"
     else:
-        config["selection_method"] = "top_n_prior_return"
+        simple["rank"] = "return_best"
 
-    # ---- filters (WHERE conditions) ----
-    filters = []
+    # ---- rebalance frequency ----
+    if re.search(r'\b(every month|monthly|each month)\b', text):
+        simple["rebalance"] = "monthly"
+        simple["lookback"] = "1m"
+    elif re.search(r'\b(every quarter|quarterly|each quarter)\b', text):
+        if not re.search(r'\b(every year|annually|each year)\b', text):
+            simple["rebalance"] = "quarterly"
+            simple["lookback"] = "3m"
 
-    # Market cap: explicit dollar amount, e.g. "market cap > $10B", "over 5 billion"
-    _mcap_pat = re.search(
-        r'market.?cap\s*(?:above|over|greater than|>|more than|exceeding|of at least|>=)?\s*\$?\s*(\d+(?:\.\d+)?)\s*(b(?:illion)?|t(?:rillion)?|m(?:illion)?)\b',
-        text
-    )
-    if _mcap_pat:
-        _num = float(_mcap_pat.group(1))
-        _unit = _mcap_pat.group(2)[0]
-        _mult = {"b": 1e9, "t": 1e12, "m": 1e6}[_unit]
-        filters.append({"field": "market_cap", "op": ">", "value": _num * _mult})
-    elif re.search(r'\bmega.?cap\b', text):
-        filters.append({"field": "market_cap", "op": ">", "value": 100_000_000_000})
-    elif re.search(r'\blarge.?cap\b', text):
-        filters.append({"field": "market_cap", "op": ">", "value": 10_000_000_000})
-    elif re.search(r'\bmid.?cap\b', text):
-        filters.append({"field": "market_cap", "op": ">", "value": 2_000_000_000})
-        filters.append({"field": "market_cap", "op": "<", "value": 10_000_000_000})
-    elif re.search(r'\bsmall.?cap\b', text):
-        filters.append({"field": "market_cap", "op": "<", "value": 2_000_000_000})
+    # ---- Q1/Q2 buy offset ----
+    if re.search(r'\b(first quarter|q1)\b', text) and re.search(r'\b(hold|3 quarter|three quarter)\b', text):
+        simple["buy_after_months"] = 3
+        simple["lookback"] = "3m"
+        simple["hold"] = 9
+    elif re.search(r'\b(january|jan\.?)\b', text) and re.search(r'\b(best|top|winner|feb)\b', text):
+        simple["buy_after_months"] = 1
+        simple["lookback"] = "1m"
 
-    # Price filter: "price above $50", "stock price > 100", "price below $20"
-    _price_pat = re.search(
-        r'(?:stock\s+)?price\s*(above|over|>|greater than|more than|below|under|<|less than)\s*\$?\s*(\d+(?:\.\d+)?)',
-        text
-    )
-    if _price_pat:
-        _op_word = _price_pat.group(1)
-        _op = ">" if _op_word in ("above", "over", ">", "greater than", "more than") else "<"
-        filters.append({"field": "price", "op": _op, "value": float(_price_pat.group(2))})
-
-    # When "all losers/winners" is used (n=999), add implicit return direction filter
-    # so only stocks that actually lost/gained are included — not just ranked last/first.
-    if n == 999:
-        has_return_filter = any(f.get("field") == "prior_return" for f in filters)
-        if not has_return_filter:
-            if re.search(r'\b(worst|loser|losers|lost|loss|declined|fell|dropped|down|negative)\b', text):
-                filters.append({"field": "prior_return", "op": "<", "value": 0})
-            elif re.search(r'\b(best|winner|winners|gained|rose|up|positive|returned)\b', text):
-                filters.append({"field": "prior_return", "op": ">", "value": 0})
-
-    config["filters"] = filters
-
-    # ---- hold_months ----
+    # ---- hold duration ----
     hm = re.search(r'\bhold(?:ing)?\s+(?:for\s+)?(\d+)\s*(month|quarter)', text)
     if hm:
-        num = int(hm.group(1))
-        unit = hm.group(2)
-        config["hold_months"] = num * 3 if unit.startswith("quarter") else num
-    elif re.search(r'\bhold(?:ing)?\s+(?:for\s+)?(?:a\s+)?(?:full\s+)?year\b', text):
-        config["hold_months"] = 12
-    elif re.search(r'\bhold(?:ing)?\s+(?:for\s+)?(?:a\s+)?(?:full\s+)?quarter\b', text):
-        config["hold_months"] = 3
+        num, unit = int(hm.group(1)), hm.group(2)
+        simple["hold"] = num * 3 if unit.startswith("quarter") else num
 
-    # ---- detect start year ----
+    # ---- filters ----
+    filters_raw = []
+    mcap_m = re.search(
+        r'market.?cap\s*(?:above|over|>|greater than|more than|of at least)?\s*\$?\s*(\d+(?:\.\d+)?)\s*(b(?:illion)?|t(?:rillion)?|m(?:illion)?)\b',
+        text
+    )
+    if mcap_m:
+        filters_raw.append(f"market_cap > {mcap_m.group(1)}{mcap_m.group(2)[0].upper()}")
+    elif re.search(r'\bmega.?cap\b', text):
+        filters_raw.append("market_cap > 100B")
+    elif re.search(r'\blarge.?cap\b', text):
+        filters_raw.append("market_cap > 10B")
+    elif re.search(r'\bmid.?cap\b', text):
+        filters_raw.append("market_cap > 2B")
+        filters_raw.append("market_cap < 10B")
+    elif re.search(r'\bsmall.?cap\b', text):
+        filters_raw.append("market_cap < 2B")
+
+    price_m = re.search(r'(?:stock\s+)?price\s*(above|over|>|below|under|<)\s*\$?\s*(\d+(?:\.\d+)?)', text)
+    if price_m:
+        op = ">" if price_m.group(1) in ("above", "over", ">") else "<"
+        filters_raw.append(f"price {op} {price_m.group(2)}")
+
+    # implicit return filter when "all losers/winners"
+    if simple["n"] >= 999:
+        if re.search(r'\b(loser|losers|lost|fell|dropped|declined|negative)\b', text):
+            filters_raw.append("return < 0")
+        elif re.search(r'\b(winner|winners|gained|rose|positive)\b', text):
+            filters_raw.append("return > 0")
+
+    simple["filters"] = filters_raw
+
+    # ---- start year ----
     m = re.search(r'\b(20\d\d)\b', text)
     if m:
         yr = int(m.group(1))
         if 2001 <= yr <= 2025:
-            config["start_year"] = yr
+            simple["start_year"] = yr  # will be overridden by compile's start_year param anyway
 
-    # ---- display name ----
-    freq = config.get("rebalance_frequency", "annual")
-    lb = config.get("selection_lookback_months", 12)
-    offset = config.get("buy_offset_months", 0)
-    freq_label = {"annual": "annual", "quarterly": "quarterly", "monthly": "monthly"}.get(freq, freq)
-    jan_effect = (offset == 1 and lb == 1)
-    q1_effect = (offset == 3 and lb == 3 and freq == "annual")
-    _labels = {
-        "top_n_prior_return":    (f"Top {n} January winners (buy Feb, hold 12mo)" if jan_effect
-                                  else f"Top {n} Q1 winners (buy Apr, hold 12mo)" if q1_effect
-                                  else f"Top {n} prior-{lb}mo winner{'s' if n>1 else ''} ({freq_label})"),
-        "bottom_n_prior_return": f"Bottom {n} prior-{lb}mo loser{'s' if n>1 else ''} ({freq_label})",
-        "top_n_momentum":        f"Top {n} momentum stock{'s' if n>1 else ''} ({lb}m, {freq_label})",
-        "bottom_n_momentum":     f"Bottom {n} momentum stock{'s' if n>1 else ''} ({lb}m, {freq_label})",
-        "top_n_market_cap":          f"Top {n} largest by market cap ({freq_label})",
-        "top_n_market_cap_growth":   f"Top {n} by market cap growth ({lb}mo, {freq_label})",
-        "hold_ticker":           f"Hold {', '.join(config['tickers'])}",
-        "equal_weight_sp500":    "S&P 500 index (SPY)",
-        "equal_weight_nasdaq":   "Nasdaq 100 index (QQQ)",
-    }
-    _filter_suffix = ""
-    for _f in filters:
-        _fld = _f.get("field", "")
-        _fop = _f.get("op", ">")
-        _fval = float(_f.get("value", 0))
-        if _fld == "market_cap":
-            if _fval >= 1e12:
-                _fstr = f"${_fval/1e12:.1f}T"
-            elif _fval >= 1e9:
-                _fstr = f"${_fval/1e9:.0f}B"
-            else:
-                _fstr = f"${_fval/1e6:.0f}M"
-            _filter_suffix += f", mktcap {_fop} {_fstr}"
-        elif _fld == "price":
-            _filter_suffix += f", price {_fop} ${_fval:.0f}"
-
-    config["display_name"] = _labels.get(config["selection_method"], scenario[:60]) + _filter_suffix
-    return config
+    return _compile(simple, initial_capital, start_year)
 
 
 # ---------------------------------------------------------------------------
@@ -500,10 +566,6 @@ def _rule_based(scenario: str, initial_capital: float, start_year: int) -> dict:
 # ---------------------------------------------------------------------------
 
 def interpret(scenario: str, initial_capital: float = 10_000, start_year: int = 2001) -> dict:
-    """
-    Interpret a natural-language scenario into a backtest config.
-    Priority: OpenRouter → Groq → Anthropic → rule-based
-    """
     config = None
     error_msg = None
 
@@ -533,7 +595,7 @@ def interpret(scenario: str, initial_capital: float = 10_000, start_year: int = 
     else:
         config["_interpreter"] = "llm"
 
-    # Always enforce UI settings
+    # Enforce required fields
     config.setdefault("selection_method", "top_n_prior_return")
     config.setdefault("n", 1)
     config.setdefault("tickers", [])

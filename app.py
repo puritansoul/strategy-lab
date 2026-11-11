@@ -33,19 +33,28 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-st.title("📈 Strategy Lab")
-st.caption("Describe any investment scenario in plain English — see 25 years of results instantly.")
+# ---------------------------------------------------------------------------
+# Title (left) + Settings (top right)
+# ---------------------------------------------------------------------------
+
+_title_col, _settings_col = st.columns([3, 1])
+with _title_col:
+    st.title("📈 Strategy Lab")
+    st.caption("Describe any investment scenario in plain English — see 25 years of results instantly.")
+with _settings_col:
+    with st.container(border=True):
+        st.markdown("**Settings**")
+        initial_capital = st.number_input("Starting capital ($)", value=10_000, step=1_000, min_value=1_000)
+        start_year = st.slider("Start year", min_value=2001, max_value=2024, value=2001)
 
 # ---------------------------------------------------------------------------
-# Sidebar settings
+# Sidebar: AI status + saved backtests
 # ---------------------------------------------------------------------------
+
+if "saved_backtests" not in st.session_state:
+    st.session_state["saved_backtests"] = []
 
 with st.sidebar:
-    st.header("Settings")
-    initial_capital = st.number_input("Starting capital ($)", value=10_000, step=1_000, min_value=1_000)
-    start_year = st.slider("Start year", min_value=2001, max_value=2024, value=2001)
-    st.divider()
-
     import os as _os
     _has_or = bool(_os.environ.get("OPENROUTER_API_KEY"))
     _has_groq = bool(_os.environ.get("GROQ_API_KEY"))
@@ -60,18 +69,36 @@ with st.sidebar:
         st.warning("🔤 Rule-based interpreter only")
         with st.expander("Enable free AI interpreter"):
             st.markdown(
-                "**Groq (recommended — fast & free)**\n\n"
-                "1. Go to **console.groq.com** → Sign up free\n"
-                "2. API Keys → Create Key\n"
-                "3. Add to Streamlit secrets:\n"
-                "```\nGROQ_API_KEY = 'gsk_...'\n```\n\n"
-                "**OpenRouter (also free)**\n\n"
+                "**OpenRouter (free)**\n\n"
                 "1. Go to **openrouter.ai** → Sign up\n"
                 "2. Keys → Create Key\n"
                 "3. Add to Streamlit secrets:\n"
                 "```\nOPENROUTER_API_KEY = 'sk-or-...'\n```"
             )
     st.divider()
+
+    # Saved backtests compact list
+    _saved = st.session_state.get("saved_backtests", [])
+    if _saved:
+        st.subheader(f"Saved Backtests ({len(_saved)})")
+        _to_delete = None
+        for _i, _s in enumerate(_saved):
+            _beat_pct = f"{_s['years_beat']}/{_s['total_years']} yrs beat S&P"
+            with st.container(border=True):
+                _nc, _dc = st.columns([5, 1])
+                _nc.markdown(f"**{_s['name'][:35]}**")
+                _nc.caption(f"${_s['final']:,.0f} · {_s['total_roi']*100:+.1f}% · {_beat_pct}")
+                if _dc.button("✕", key=f"sidebar_del_{_i}", help="Remove"):
+                    _to_delete = _i
+        if _to_delete is not None:
+            st.session_state["saved_backtests"].pop(_to_delete)
+            st.rerun()
+        if len(_saved) > 1:
+            if st.button("🗑 Clear all", key="sidebar_clear_all"):
+                st.session_state["saved_backtests"] = []
+                st.rerun()
+        st.divider()
+
     st.caption("Data: S&P 500 composition via fja05680/sp500 · Prices via yfinance")
 
 # ---------------------------------------------------------------------------
@@ -116,21 +143,18 @@ EXAMPLES = [
     "What if I held AMZN since 2002?",
 ]
 
-# Persist selected scenario, auto-run flag, and saved backtests across rerenders
+# Persist selected scenario and auto-run flag across rerenders
 if "scenario_text" not in st.session_state:
     st.session_state["scenario_text"] = ""
 if "auto_run" not in st.session_state:
     st.session_state["auto_run"] = False
-if "saved_backtests" not in st.session_state:
-    st.session_state["saved_backtests"] = []
 
-st.subheader("Scenario")
-cols = st.columns(4)
-for i, ex in enumerate(EXAMPLES):
-    if cols[i % 4].button(ex, width="stretch", key=f"ex_{i}"):
-        st.session_state["scenario_text"] = ex
-        st.session_state["auto_run"] = True
-        # No st.rerun() — button click already triggers a rerender
+with st.expander("Scenario Examples", expanded=True):
+    cols = st.columns(4)
+    for i, ex in enumerate(EXAMPLES):
+        if cols[i % 4].button(ex, width="stretch", key=f"ex_{i}"):
+            st.session_state["scenario_text"] = ex
+            st.session_state["auto_run"] = True
 
 scenario_input = st.text_area(
     "Or describe your own scenario:",
@@ -360,6 +384,7 @@ if run_clicked and scenario_input.strip():
             "initial_capital": init,
         })
         st.success(f"Saved: {config.get('display_name', 'backtest')}")
+        st.rerun()
 
     # -- Chart --
     years = [r["year"] for r in rows]
@@ -491,22 +516,15 @@ elif run_clicked:
     st.warning("Please enter a scenario first.")
 
 # ---------------------------------------------------------------------------
-# Saved Backtests + Comparison (always visible when saves exist)
+# Saved Backtests comparison (always visible when >= 2 saves)
 # ---------------------------------------------------------------------------
 
 saved = st.session_state.get("saved_backtests", [])
-if saved:
+if len(saved) >= 2:
     st.divider()
-    st.subheader("Saved Backtests")
-
-    col_del, col_space = st.columns([1, 5])
-    if col_del.button("🗑 Clear all saved"):
-        st.session_state["saved_backtests"] = []
-        st.rerun()
+    st.subheader("Compare Saved Backtests")
 
     # Summary table of all saves
-    _METRIC_COLS = ["Final Portfolio", "S&P Final", "Total ROI", "SPY ROI",
-                    "Years Beat S&P", "Longest Losing Streak", "Portfolio Low", "S&P Low"]
     save_rows_html = ""
     for idx, s in enumerate(saved):
         yb = s["years_beat"]; ty = s["total_years"]
@@ -539,73 +557,72 @@ if saved:
     st.markdown("")
 
     # -- Comparison selector --
-    if len(saved) >= 2:
-        st.markdown("**Compare up to 3 saved backtests**")
-        names = [f"{i+1}. {s['name'][:60]}" for i, s in enumerate(saved)]
-        chosen_labels = st.multiselect(
-            "Select backtests to compare:",
-            options=names,
-            max_selections=3,
-            key="compare_select",
-        )
-        chosen = [saved[names.index(lbl)] for lbl in chosen_labels]
+    st.markdown("**Select up to 3 to compare side-by-side**")
+    names = [f"{i+1}. {s['name'][:60]}" for i, s in enumerate(saved)]
+    chosen_labels = st.multiselect(
+        "Select backtests to compare:",
+        options=names,
+        max_selections=3,
+        key="compare_select",
+    )
+    chosen = [saved[names.index(lbl)] for lbl in chosen_labels]
 
-        if len(chosen) >= 2:
-            st.markdown("#### Side-by-side comparison")
+    if len(chosen) >= 2:
+        st.markdown("#### Side-by-side comparison")
 
-            # Metric comparison table
-            metrics = [
-                ("Final Portfolio Value", lambda s: f"${s['final']:,.0f}"),
-                ("Total ROI",             lambda s: f"{s['total_roi']*100:+.1f}%"),
-                ("S&P 500 Final Value",   lambda s: f"${s['spy_final']:,.0f}"),
-                ("S&P 500 ROI",           lambda s: f"{s['spy_roi']*100:+.1f}%"),
-                ("Years Beat S&P",        lambda s: f"{s['years_beat']}/{s['total_years']} ({s['years_beat']/s['total_years']*100:.0f}%)"),
-                ("Longest Losing Streak", lambda s: f"{s['max_behind']} yr{'s' if s['max_behind']!=1 else ''}"),
-                ("Portfolio Low",         lambda s: f"${s['port_min']:,.0f}"),
-                ("S&P Low",               lambda s: f"${s['spy_min']:,.0f}"),
-            ]
+        # Metric comparison table
+        metrics = [
+            ("Final Portfolio Value", lambda s: f"${s['final']:,.0f}"),
+            ("Total ROI",             lambda s: f"{s['total_roi']*100:+.1f}%"),
+            ("S&P 500 Final Value",   lambda s: f"${s['spy_final']:,.0f}"),
+            ("S&P 500 ROI",           lambda s: f"{s['spy_roi']*100:+.1f}%"),
+            ("Years Beat S&P",        lambda s: f"{s['years_beat']}/{s['total_years']} ({s['years_beat']/s['total_years']*100:.0f}%)"),
+            ("Longest Losing Streak", lambda s: f"{s['max_behind']} yr{'s' if s['max_behind']!=1 else ''}"),
+            ("Portfolio Low",         lambda s: f"${s['port_min']:,.0f}"),
+            ("S&P Low",               lambda s: f"${s['spy_min']:,.0f}"),
+        ]
 
-            _hdr = "".join(f"<th style='text-align:right;padding:8px 12px;'>{c['name'][:40]}</th>" for c in [{"name": lbl} for lbl in chosen_labels])
-            _cmp_rows = ""
-            for label, fn in metrics:
-                vals = [fn(s) for s in chosen]
-                _cmp_rows += f"<tr><td style='padding:6px 12px;font-weight:600;'>{label}</td>"
-                for v in vals:
-                    _cmp_rows += f"<td style='padding:6px 12px;text-align:right;'>{v}</td>"
-                _cmp_rows += "</tr>"
+        _hdr = "".join(f"<th style='text-align:right;padding:8px 12px;'>{c['name'][:40]}</th>" for c in [{"name": lbl} for lbl in chosen_labels])
+        _cmp_rows = ""
+        for label, fn in metrics:
+            vals = [fn(s) for s in chosen]
+            _cmp_rows += f"<tr><td style='padding:6px 12px;font-weight:600;'>{label}</td>"
+            for v in vals:
+                _cmp_rows += f"<td style='padding:6px 12px;text-align:right;'>{v}</td>"
+            _cmp_rows += "</tr>"
 
-            st.markdown(f"""
-            <table class='saved-table'><thead><tr>
-              <th>Metric</th>{_hdr}
-            </tr></thead><tbody>{_cmp_rows}</tbody></table>
-            """, unsafe_allow_html=True)
+        st.markdown(f"""
+        <table class='saved-table'><thead><tr>
+          <th>Metric</th>{_hdr}
+        </tr></thead><tbody>{_cmp_rows}</tbody></table>
+        """, unsafe_allow_html=True)
 
-            # Overlay chart
-            st.markdown("#### Portfolio value over time")
-            _colors = ["#00e676", "#ff9800", "#e91e63"]
-            fig_cmp = go.Figure()
-            for i, s in enumerate(chosen):
-                _yrs = [r["year"] for r in s["strategy_rows"]]
-                _vals = [r["end_value"] for r in s["strategy_rows"]]
-                fig_cmp.add_trace(go.Scatter(
-                    x=_yrs, y=_vals,
-                    mode="lines+markers",
-                    name=s["name"][:40],
-                    line=dict(color=_colors[i], width=2.5),
-                    marker=dict(size=5),
-                    hovertemplate="Year: %{x}<br>$%{y:,.0f}<extra></extra>",
-                ))
-            # Add SPY once (use first chosen's spy_rows)
+        # Overlay chart
+        st.markdown("#### Portfolio value over time")
+        _colors = ["#00e676", "#ff9800", "#e91e63"]
+        fig_cmp = go.Figure()
+        for i, s in enumerate(chosen):
+            _yrs = [r["year"] for r in s["strategy_rows"]]
+            _vals = [r["end_value"] for r in s["strategy_rows"]]
             fig_cmp.add_trace(go.Scatter(
-                x=[r["year"] for r in chosen[0]["spy_rows"]],
-                y=[r["value"] for r in chosen[0]["spy_rows"]],
-                mode="lines", name="S&P 500",
-                line=dict(color="#2196f3", width=2, dash="dot"),
-                hovertemplate="Year: %{x}<br>SPY: $%{y:,.0f}<extra></extra>",
+                x=_yrs, y=_vals,
+                mode="lines+markers",
+                name=s["name"][:40],
+                line=dict(color=_colors[i], width=2.5),
+                marker=dict(size=5),
+                hovertemplate="Year: %{x}<br>$%{y:,.0f}<extra></extra>",
             ))
-            fig_cmp.update_layout(
-                template="plotly_dark", hovermode="x unified", height=420,
-                yaxis=dict(tickformat="$,.0f"),
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            )
-            st.plotly_chart(fig_cmp, width="stretch")
+        # Add SPY once (use first chosen's spy_rows)
+        fig_cmp.add_trace(go.Scatter(
+            x=[r["year"] for r in chosen[0]["spy_rows"]],
+            y=[r["value"] for r in chosen[0]["spy_rows"]],
+            mode="lines", name="S&P 500",
+            line=dict(color="#2196f3", width=2, dash="dot"),
+            hovertemplate="Year: %{x}<br>SPY: $%{y:,.0f}<extra></extra>",
+        ))
+        fig_cmp.update_layout(
+            template="plotly_dark", hovermode="x unified", height=420,
+            yaxis=dict(tickformat="$,.0f"),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        )
+        st.plotly_chart(fig_cmp, width="stretch")

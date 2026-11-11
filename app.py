@@ -116,11 +116,13 @@ EXAMPLES = [
     "What if I held AMZN since 2002?",
 ]
 
-# Persist selected scenario and auto-run flag across rerenders
+# Persist selected scenario, auto-run flag, and saved backtests across rerenders
 if "scenario_text" not in st.session_state:
     st.session_state["scenario_text"] = ""
 if "auto_run" not in st.session_state:
     st.session_state["auto_run"] = False
+if "saved_backtests" not in st.session_state:
+    st.session_state["saved_backtests"] = []
 
 st.subheader("Scenario")
 cols = st.columns(4)
@@ -299,25 +301,67 @@ if run_clicked and scenario_input.strip():
     with st.expander("📋 What the AI understood — strategy explanation + real example", expanded=True):
         _render_strategy_explanation(config, result, dm)
 
-    # -- Summary cards --
+    # -- Compute summary stats --
     init = result["initial_capital"]
     final = result["final_value"]
     spy_final = result["spy_final"]
     total_roi = result["total_roi"]
     spy_roi = result["spy_roi"]
-
-    gain_vs_spy = final - spy_final
-
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Final Portfolio", f"${final:,.0f}", f"{total_roi*100:+.1f}%")
-    c2.metric("S&P 500 (same period)", f"${spy_final:,.0f}", f"{spy_roi*100:+.1f}%")
-    c3.metric("vs S&P 500", f"${gain_vs_spy:+,.0f}", f"{(total_roi - spy_roi)*100:+.1f}pp")
-    c4.metric("Starting capital", f"${init:,.0f}", f"{start_year}–2026")
-
-    # -- Chart --
     rows = result["strategy_rows"]
     spy_rows = result["spy_rows"]
+    spy_by_year_ret = {r["year"]: r["return"] for r in spy_rows}
 
+    years_beat = sum(
+        1 for r in rows if r["portfolio_return"] > spy_by_year_ret.get(r["year"], 0)
+    )
+    total_years = len(rows)
+
+    max_behind, cur_behind = 0, 0
+    for r in rows:
+        if r["portfolio_return"] < spy_by_year_ret.get(r["year"], 0):
+            cur_behind += 1
+            max_behind = max(max_behind, cur_behind)
+        else:
+            cur_behind = 0
+
+    port_min = min((r["end_value"] for r in rows), default=init)
+    spy_min  = min((r["value"]     for r in spy_rows), default=init)
+
+    # -- Summary cards (row 1: performance, row 2: risk) --
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Final Portfolio",    f"${final:,.0f}",    f"{total_roi*100:+.1f}%")
+    c2.metric("S&P 500 (same period)", f"${spy_final:,.0f}", f"{spy_roi*100:+.1f}%")
+    c3.metric("Years Beat S&P",     f"{years_beat} / {total_years}",
+              f"{years_beat/total_years*100:.0f}% of years" if total_years else "")
+
+    c4, c5, c6 = st.columns(3)
+    c4.metric("Longest Losing Streak vs S&P", f"{max_behind} yr{'s' if max_behind != 1 else ''}",
+              "consecutive years behind S&P")
+    c5.metric("Portfolio Low",  f"${port_min:,.0f}", f"{(port_min-init)/init*100:+.1f}% vs start")
+    c6.metric("S&P Low",        f"${spy_min:,.0f}",  f"{(spy_min-init)/init*100:+.1f}% vs start")
+
+    # -- Save button --
+    save_key = f"save_{hash(config.get('display_name','') + str(final))}"
+    if st.button("💾 Save this backtest", key=save_key):
+        st.session_state["saved_backtests"].append({
+            "name":          config.get("display_name", scenario_input[:60]),
+            "final":         final,
+            "spy_final":     spy_final,
+            "total_roi":     total_roi,
+            "spy_roi":       spy_roi,
+            "years_beat":    years_beat,
+            "total_years":   total_years,
+            "max_behind":    max_behind,
+            "port_min":      port_min,
+            "spy_min":       spy_min,
+            "strategy_rows": rows,
+            "spy_rows":      spy_rows,
+            "start_year":    start_year,
+            "initial_capital": init,
+        })
+        st.success(f"Saved: {config.get('display_name', 'backtest')}")
+
+    # -- Chart --
     years = [r["year"] for r in rows]
     values = [r["end_value"] for r in rows]
     spy_values = [r["value"] for r in spy_rows if r["year"] in years]
@@ -354,7 +398,7 @@ if run_clicked and scenario_input.strip():
     # -- Year-by-year table --
     st.subheader("Year-by-Year Breakdown")
 
-    spy_by_year = {r["year"]: r["return"] for r in spy_rows}
+    spy_by_year = spy_by_year_ret
 
     def _color(val_str):
         try:
@@ -445,3 +489,123 @@ if run_clicked and scenario_input.strip():
 
 elif run_clicked:
     st.warning("Please enter a scenario first.")
+
+# ---------------------------------------------------------------------------
+# Saved Backtests + Comparison (always visible when saves exist)
+# ---------------------------------------------------------------------------
+
+saved = st.session_state.get("saved_backtests", [])
+if saved:
+    st.divider()
+    st.subheader("Saved Backtests")
+
+    col_del, col_space = st.columns([1, 5])
+    if col_del.button("🗑 Clear all saved"):
+        st.session_state["saved_backtests"] = []
+        st.rerun()
+
+    # Summary table of all saves
+    _METRIC_COLS = ["Final Portfolio", "S&P Final", "Total ROI", "SPY ROI",
+                    "Years Beat S&P", "Longest Losing Streak", "Portfolio Low", "S&P Low"]
+    save_rows_html = ""
+    for idx, s in enumerate(saved):
+        yb = s["years_beat"]; ty = s["total_years"]
+        save_rows_html += f"""
+        <tr>
+          <td style='padding:6px 12px;font-weight:600;'>{s['name'][:55]}</td>
+          <td style='padding:6px 12px;text-align:right;'>${s['final']:,.0f}</td>
+          <td style='padding:6px 12px;text-align:right;'>${s['spy_final']:,.0f}</td>
+          <td style='padding:6px 12px;text-align:right;color:{"#1a7a3a" if s["total_roi"]>s["spy_roi"] else "#c0392b"};'>{s['total_roi']*100:+.1f}%</td>
+          <td style='padding:6px 12px;text-align:right;'>{s['spy_roi']*100:+.1f}%</td>
+          <td style='padding:6px 12px;text-align:right;'>{yb}/{ty} ({yb/ty*100:.0f}%)</td>
+          <td style='padding:6px 12px;text-align:right;color:{"#c0392b" if s["max_behind"]>=5 else "inherit"};'>{s['max_behind']} yr{'s' if s['max_behind']!=1 else ''}</td>
+          <td style='padding:6px 12px;text-align:right;'>${s['port_min']:,.0f}</td>
+          <td style='padding:6px 12px;text-align:right;'>${s['spy_min']:,.0f}</td>
+        </tr>"""
+
+    st.markdown(f"""
+    <style>.saved-table{{border-collapse:collapse;width:100%;font-size:0.91em;}}
+    .saved-table th{{font-weight:600;padding:8px 12px;border-bottom:2px solid #ddd;text-align:left;}}
+    .saved-table td{{border-bottom:1px solid #eee;}}
+    .saved-table tr:hover td{{background:rgba(0,0,0,0.03);}}</style>
+    <table class='saved-table'><thead><tr>
+      <th>Strategy</th><th style='text-align:right;'>Final</th><th style='text-align:right;'>S&P Final</th>
+      <th style='text-align:right;'>ROI</th><th style='text-align:right;'>S&P ROI</th>
+      <th style='text-align:right;'>Beat S&P</th><th style='text-align:right;'>Losing Streak</th>
+      <th style='text-align:right;'>Port Low</th><th style='text-align:right;'>S&P Low</th>
+    </tr></thead><tbody>{save_rows_html}</tbody></table>
+    """, unsafe_allow_html=True)
+
+    st.markdown("")
+
+    # -- Comparison selector --
+    if len(saved) >= 2:
+        st.markdown("**Compare up to 3 saved backtests**")
+        names = [f"{i+1}. {s['name'][:60]}" for i, s in enumerate(saved)]
+        chosen_labels = st.multiselect(
+            "Select backtests to compare:",
+            options=names,
+            max_selections=3,
+            key="compare_select",
+        )
+        chosen = [saved[names.index(lbl)] for lbl in chosen_labels]
+
+        if len(chosen) >= 2:
+            st.markdown("#### Side-by-side comparison")
+
+            # Metric comparison table
+            metrics = [
+                ("Final Portfolio Value", lambda s: f"${s['final']:,.0f}"),
+                ("Total ROI",             lambda s: f"{s['total_roi']*100:+.1f}%"),
+                ("S&P 500 Final Value",   lambda s: f"${s['spy_final']:,.0f}"),
+                ("S&P 500 ROI",           lambda s: f"{s['spy_roi']*100:+.1f}%"),
+                ("Years Beat S&P",        lambda s: f"{s['years_beat']}/{s['total_years']} ({s['years_beat']/s['total_years']*100:.0f}%)"),
+                ("Longest Losing Streak", lambda s: f"{s['max_behind']} yr{'s' if s['max_behind']!=1 else ''}"),
+                ("Portfolio Low",         lambda s: f"${s['port_min']:,.0f}"),
+                ("S&P Low",               lambda s: f"${s['spy_min']:,.0f}"),
+            ]
+
+            _hdr = "".join(f"<th style='text-align:right;padding:8px 12px;'>{c['name'][:40]}</th>" for c in [{"name": lbl} for lbl in chosen_labels])
+            _cmp_rows = ""
+            for label, fn in metrics:
+                vals = [fn(s) for s in chosen]
+                _cmp_rows += f"<tr><td style='padding:6px 12px;font-weight:600;'>{label}</td>"
+                for v in vals:
+                    _cmp_rows += f"<td style='padding:6px 12px;text-align:right;'>{v}</td>"
+                _cmp_rows += "</tr>"
+
+            st.markdown(f"""
+            <table class='saved-table'><thead><tr>
+              <th>Metric</th>{_hdr}
+            </tr></thead><tbody>{_cmp_rows}</tbody></table>
+            """, unsafe_allow_html=True)
+
+            # Overlay chart
+            st.markdown("#### Portfolio value over time")
+            _colors = ["#00e676", "#ff9800", "#e91e63"]
+            fig_cmp = go.Figure()
+            for i, s in enumerate(chosen):
+                _yrs = [r["year"] for r in s["strategy_rows"]]
+                _vals = [r["end_value"] for r in s["strategy_rows"]]
+                fig_cmp.add_trace(go.Scatter(
+                    x=_yrs, y=_vals,
+                    mode="lines+markers",
+                    name=s["name"][:40],
+                    line=dict(color=_colors[i], width=2.5),
+                    marker=dict(size=5),
+                    hovertemplate="Year: %{x}<br>$%{y:,.0f}<extra></extra>",
+                ))
+            # Add SPY once (use first chosen's spy_rows)
+            fig_cmp.add_trace(go.Scatter(
+                x=[r["year"] for r in chosen[0]["spy_rows"]],
+                y=[r["value"] for r in chosen[0]["spy_rows"]],
+                mode="lines", name="S&P 500",
+                line=dict(color="#2196f3", width=2, dash="dot"),
+                hovertemplate="Year: %{x}<br>SPY: $%{y:,.0f}<extra></extra>",
+            ))
+            fig_cmp.update_layout(
+                template="plotly_dark", hovermode="x unified", height=420,
+                yaxis=dict(tickformat="$,.0f"),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            )
+            st.plotly_chart(fig_cmp, width="stretch")

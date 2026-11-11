@@ -266,18 +266,6 @@ if run_clicked and scenario_input.strip():
         if config.get("_interpreter") == "rule-based":
             st.caption("🔤 Interpreted via keyword matching — verify the strategy explanation below.")
 
-    # If market cap strategy, ensure historical shares are downloaded
-    if config.get("selection_method") in ("top_n_market_cap", "top_n_market_cap_growth"):
-        if hasattr(dm, "shares_history_loaded") and not dm.shares_history_loaded():
-            with st.status("Downloading historical shares outstanding (one-time, ~2 min)…", expanded=True) as st_shares:
-                progress_bar2 = st.progress(0)
-                status_text2 = st.empty()
-                def shares_progress(pct, msg):
-                    progress_bar2.progress(pct)
-                    status_text2.text(msg)
-                dm.load_shares_history(shares_progress)
-                st_shares.update(label="Historical shares data ready!", state="complete")
-
     with st.spinner("Running backtest…"):
         result = run_backtest(config, dm)
 

@@ -222,94 +222,13 @@ class DataManager:
     def shares_loaded(self) -> bool:
         return (DATA_DIR / "shares.json").exists()
 
-    # -- historical shares outstanding --
-
-    def shares_history_loaded(self) -> bool:
-        return (DATA_DIR / "shares_history.parquet").exists()
-
-    def load_shares_history(self, progress_fn=None) -> "pd.DataFrame":
-        cache = DATA_DIR / "shares_history.parquet"
-        if cache.exists():
-            return pd.read_parquet(cache)
-
-        prices = self.prices()
-        tickers = [tk for tk in prices.columns if tk not in ("SPY", "QQQ")]
-        total = len(tickers)
-
-        def fetch_one(tk: str):
-            try:
-                s = yf.Ticker(tk).get_shares_full(start=START_DATE, end=END_DATE)
-                if s is not None and not s.empty:
-                    idx = pd.to_datetime(s.index)
-                    if idx.tz is not None:
-                        idx = idx.tz_convert(None)  # tz-aware → tz-naive
-                    s = pd.Series(s.values, index=idx.normalize(), dtype=float)
-                    s = s.groupby(s.index).last()   # bulletproof dedup
-                    return tk, s
-            except Exception:
-                pass
-            # fallback: single current value as a constant series
-            try:
-                val = yf.Ticker(tk).fast_info.shares
-                if val and float(val) > 0:
-                    return tk, pd.Series(
-                        [float(val)],
-                        index=[pd.Timestamp(START_DATE)]
-                    )
-            except Exception:
-                pass
-            return tk, None
-
-        if progress_fn:
-            progress_fn(0, f"Downloading shares history for {total} tickers…")
-
-        collected: Dict[str, pd.Series] = {}
-        done = 0
-        with ThreadPoolExecutor(max_workers=10) as ex:
-            futures = {ex.submit(fetch_one, tk): tk for tk in tickers}
-            for fut in as_completed(futures):
-                tk, s = fut.result()
-                if s is not None:
-                    collected[tk] = s
-                done += 1
-                if progress_fn and done % 50 == 0:
-                    progress_fn(done / total, f"Shares history: {done}/{total}…")
-
-        if not collected:
-            return pd.DataFrame()
-
-        # Final dedup pass, then build the DataFrame without relying on pandas'
-        # internal alignment (which raises on duplicate labels in any series).
-        collected = {tk: s.groupby(level=0).last() for tk, s in collected.items()}
-        all_dates = pd.DatetimeIndex(
-            sorted(set().union(*(set(s.index) for s in collected.values())))
-        )
-        raw = pd.DataFrame(
-            {tk: s.reindex(all_dates) for tk, s in collected.items()},
-            index=all_dates,
-        )
-        daily = raw.reindex(raw.index.union(prices.index)).sort_index().ffill().reindex(prices.index)
-        daily.to_parquet(cache)
-        return daily
-
-    def shares_at_date(self, date: str) -> pd.Series:
-        """Return shares outstanding for all tickers on or before `date`."""
-        cache = DATA_DIR / "shares_history.parquet"
-        if not cache.exists():
-            return pd.Series(dtype=float)
-        df = pd.read_parquet(cache)
-        idx = df.index[df.index <= pd.Timestamp(date)]
-        if idx.empty:
-            return pd.Series(dtype=float)
-        return df.loc[idx[-1]].dropna()
-
     def market_cap_proxy(self, tickers: List[str], year: int) -> Dict[str, float]:
-        """Market cap = price × historical shares outstanding at Jan 1 of year.
+        """Market cap = price × shares outstanding (snapshot).
 
-        Uses daily shares history if available, falls back to current snapshot.
+        Uses the shares.json snapshot (current shares) × historical price.
+        Share counts shift slowly enough that this is accurate for ranking.
         """
         date_str = f"{year}-01-01"
-        hist_shares = self.shares_at_date(date_str) if self.shares_history_loaded() else pd.Series(dtype=float)
         snap_shares = self.shares_cache() if self.shares_loaded() else {}
 
         out: Dict[str, float] = {}
@@ -317,9 +236,7 @@ class DataManager:
             price = self.price_at(tk, date_str)
             if not price:
                 continue
-            if tk in hist_shares.index:
-                out[tk] = price * float(hist_shares[tk])
-            elif tk in snap_shares:
+            if tk in snap_shares:
                 out[tk] = price * snap_shares[tk]
             else:
                 out[tk] = price  # price-only fallback

@@ -97,17 +97,21 @@ with st.sidebar:
         _to_delete = None
         _checked_indices = []
         for _i, _s in enumerate(_saved):
-            _beat_pct = f"{_s['years_beat']}/{_s['total_years']} yrs beat S&P"
             _already = _i in st.session_state.get("_cmp_checked", [])
-            with st.container(border=True):
-                _chk_col, _name_col, _del_col = st.columns([0.7, 5, 0.7])
-                if _chk_col.checkbox("", value=_already, key=f"cmp_chk_{_i}",
-                                     label_visibility="collapsed"):
-                    _checked_indices.append(_i)
-                _name_col.markdown(f"**{_s['name'][:32]}**")
-                _name_col.caption(f"${_s['final']:,.0f} · {_s['total_roi']*100:+.1f}% · {_beat_pct}")
-                if _del_col.button("✕", key=f"sidebar_del_{_i}", help="Remove"):
-                    _to_delete = _i
+            _chk_col, _name_col, _del_col = st.columns([1, 6, 1])
+            if _chk_col.checkbox("", value=_already, key=f"cmp_chk_{_i}",
+                                 label_visibility="collapsed"):
+                _checked_indices.append(_i)
+            _name_col.markdown(
+                f"**{_s['name'][:28]}**  \n"
+                f"<span style='font-size:0.78em;color:#888;'>"
+                f"${_s['final']:,.0f} · {_s['total_roi']*100:+.1f}% · "
+                f"{_s['years_beat']}/{_s['total_years']} yrs</span>",
+                unsafe_allow_html=True,
+            )
+            if _del_col.button("🗑", key=f"sidebar_del_{_i}", help="Delete"):
+                _to_delete = _i
+            st.markdown("<hr style='margin:2px 0;border-color:#333;'>", unsafe_allow_html=True)
 
         st.session_state["_cmp_checked"] = _checked_indices
 

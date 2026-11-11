@@ -88,44 +88,48 @@ if "saved_backtests" not in st.session_state:
 
 with st.sidebar:
 
-    # Saved backtests compact list
+    # Saved backtests — checkbox + metrics + delete in one card per item
     _saved = st.session_state.get("saved_backtests", [])
     if _saved:
         st.subheader(f"Saved Backtests ({len(_saved)})")
         _to_delete = None
+        _checked_indices = []
         for _i, _s in enumerate(_saved):
             _beat_pct = f"{_s['years_beat']}/{_s['total_years']} yrs beat S&P"
+            _already = _i in st.session_state.get("_cmp_checked", [])
             with st.container(border=True):
-                _nc, _dc = st.columns([5, 1])
-                _nc.markdown(f"**{_s['name'][:35]}**")
-                _nc.caption(f"${_s['final']:,.0f} · {_s['total_roi']*100:+.1f}% · {_beat_pct}")
-                if _dc.button("✕", key=f"sidebar_del_{_i}", help="Remove"):
+                _chk_col, _name_col, _del_col = st.columns([0.7, 5, 0.7])
+                if _chk_col.checkbox("", value=_already, key=f"cmp_chk_{_i}",
+                                     label_visibility="collapsed"):
+                    _checked_indices.append(_i)
+                _name_col.markdown(f"**{_s['name'][:32]}**")
+                _name_col.caption(f"${_s['final']:,.0f} · {_s['total_roi']*100:+.1f}% · {_beat_pct}")
+                if _del_col.button("✕", key=f"sidebar_del_{_i}", help="Remove"):
                     _to_delete = _i
+
+        st.session_state["_cmp_checked"] = _checked_indices
+
         if _to_delete is not None:
             st.session_state["saved_backtests"].pop(_to_delete)
+            st.session_state["_cmp_checked"] = [
+                i for i in st.session_state["_cmp_checked"] if i != _to_delete
+            ]
             st.rerun()
+
+        _n_checked = len(_checked_indices)
+        if _n_checked >= 2:
+            if st.button("▶ Compare", type="primary", key="sidebar_compare_btn"):
+                st.session_state["_compare_indices"] = _checked_indices[:3]
+                st.rerun()
+        elif _n_checked == 1:
+            st.caption("Check one more to compare")
+
         if len(_saved) > 1:
             if st.button("🗑 Clear all", key="sidebar_clear_all"):
                 st.session_state["saved_backtests"] = []
+                st.session_state["_cmp_checked"] = []
+                st.session_state["_compare_indices"] = []
                 st.rerun()
-
-        # Compare — checkboxes when 2+ saves exist
-        if len(_saved) >= 2:
-            st.divider()
-            st.markdown("**Compare** *(select 2 or 3)*")
-            _checked_indices = []
-            for _ci, _cs in enumerate(_saved):
-                _already = _ci in st.session_state.get("_cmp_checked", [])
-                if st.checkbox(_cs["name"][:42], value=_already, key=f"cmp_chk_{_ci}"):
-                    _checked_indices.append(_ci)
-            st.session_state["_cmp_checked"] = _checked_indices
-            _n_checked = len(_checked_indices)
-            if _n_checked >= 2:
-                if st.button("Compare", type="primary", key="sidebar_compare_btn"):
-                    st.session_state["_compare_indices"] = _checked_indices[:3]
-                    st.rerun()
-            elif _n_checked == 1:
-                st.caption("Select at least one more")
 
         st.divider()
 

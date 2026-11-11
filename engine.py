@@ -353,11 +353,16 @@ class DataManager:
             # 1. Historical (accurate)
             if hist is not None and tk in hist.columns and year in hist.index:
                 v = hist.loc[year, tk]
-                if pd.notna(v) and v > 0:
+                # Sanity check: S&P 500 members always have ≥1M shares.
+                # Values below this indicate the SEC filing used non-standard units
+                # (e.g. reported in millions), which produces nonsense market caps.
+                if pd.notna(v) and v >= 1_000_000:
                     shares = float(v)
             # 2. Snapshot fallback (less accurate for old years)
             if shares is None and tk in snap:
-                shares = snap[tk]
+                s = snap[tk]
+                if s >= 1_000_000:
+                    shares = s
 
             if shares:
                 out[tk] = price * shares

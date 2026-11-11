@@ -238,8 +238,7 @@ class DataManager:
                 continue
             if tk in snap_shares:
                 out[tk] = price * snap_shares[tk]
-            else:
-                out[tk] = price  # price-only fallback
+            # no shares data → omit ticker so market_cap filter treats it as unknown
         return out
 
     def january_return(self, ticker: str, year: int) -> Optional[float]:

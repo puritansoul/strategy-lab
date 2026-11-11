@@ -50,6 +50,13 @@ filters — list of strings, each: "field op value"
   e.g. "market_cap > 100B", "price > 50", "return < 0"
   Use [] if no filter.
 
+cap tier shortcuts (ALWAYS apply these as filters when mentioned):
+  mega-cap  → market_cap > 200B
+  large-cap → market_cap > 10B
+  mid-cap   → market_cap > 2B AND market_cap < 10B
+  small-cap → market_cap < 2B
+  micro-cap → market_cap < 300M
+
 n: how many stocks (integer). Use "all" only when user says all/every/each.
 
 lookback: how far back to measure performance. Default "12m".

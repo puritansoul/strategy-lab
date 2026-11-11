@@ -152,11 +152,15 @@ EXAMPLES = [
     "What if I held AMZN since 2002?",
 ]
 
-# Persist selected scenario and auto-run flag across rerenders
+# Persist selected scenario, auto-run flag, and last backtest result across rerenders
 if "scenario_text" not in st.session_state:
     st.session_state["scenario_text"] = ""
 if "auto_run" not in st.session_state:
     st.session_state["auto_run"] = False
+if "last_run_config" not in st.session_state:
+    st.session_state["last_run_config"] = None
+if "last_run_result" not in st.session_state:
+    st.session_state["last_run_result"] = None
 
 with st.expander("Scenario Examples", expanded=True):
     cols = st.columns(4)
@@ -327,11 +331,25 @@ if run_clicked and scenario_input.strip():
     with st.spinner("Running backtest…"):
         result = run_backtest(config, dm)
 
+    st.session_state["last_run_config"] = config
+    st.session_state["last_run_result"] = result
+
+elif run_clicked:
+    st.warning("Please enter a scenario first.")
+
+# Display results from current run or persisted previous run
+_config = st.session_state.get("last_run_config")
+_result = st.session_state.get("last_run_result")
+
+if _config is not None and _result is not None:
+    config = _config
+    result = _result
+
     # -- Strategy explanation --
     st.divider()
-    st.subheader(f"Results: _{config.get('display_name', scenario_input[:60])}_")
+    st.subheader(f"Results: _{config.get('display_name', '')}_")
 
-    with st.expander("📋 What the AI understood — strategy explanation + real example", expanded=True):
+    with st.expander("📋 What the AI understood — strategy explanation + real example", expanded=False):
         _render_strategy_explanation(config, result, dm)
 
     # -- Compute summary stats --
@@ -343,11 +361,11 @@ if run_clicked and scenario_input.strip():
     rows = result["strategy_rows"]
     spy_rows = result["spy_rows"]
     spy_by_year_ret = {r["year"]: r["return"] for r in spy_rows}
+    spy_val_by_year = {r["year"]: r["value"] for r in spy_rows}
 
-    years_beat = sum(
-        1 for r in rows if r["portfolio_return"] > spy_by_year_ret.get(r["year"], 0)
-    )
+    years_beat = sum(1 for r in rows if r["portfolio_return"] > spy_by_year_ret.get(r["year"], 0))
     total_years = len(rows)
+    years_under_spy_val = sum(1 for r in rows if r["end_value"] < spy_val_by_year.get(r["year"], 0))
 
     max_behind, cur_behind = 0, 0
     for r in rows:
@@ -360,39 +378,65 @@ if run_clicked and scenario_input.strip():
     port_min = min((r["end_value"] for r in rows), default=init)
     spy_min  = min((r["value"]     for r in spy_rows), default=init)
 
-    # -- Summary cards (row 1: performance, row 2: risk) --
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Final Portfolio",    f"${final:,.0f}",    f"{total_roi*100:+.1f}%")
-    c2.metric("S&P 500 (same period)", f"${spy_final:,.0f}", f"{spy_roi*100:+.1f}%")
-    c3.metric("Years Beat S&P",     f"{years_beat} / {total_years}",
-              f"{years_beat/total_years*100:.0f}% of years" if total_years else "")
+    # -- Summary tiles: single row of 7 --
+    def _tile(icon, label, value, sub, sub_good):
+        sub_color = "#00c853" if sub_good else "#f44336"
+        tint = "0,200,83" if sub_good else "244,67,54"
+        return f"""<div style="flex:1;min-width:0;border-radius:12px;padding:16px 14px;
+            border:1px solid rgba({tint},0.3);
+            background:linear-gradient(145deg,rgba({tint},0.07),rgba({tint},0.01));">
+          <div style="font-size:0.68em;text-transform:uppercase;letter-spacing:0.07em;
+               color:#888;font-weight:600;margin-bottom:8px;white-space:nowrap;
+               overflow:hidden;text-overflow:ellipsis;">{icon} {label}</div>
+          <div style="font-size:1.3em;font-weight:700;line-height:1.2;white-space:nowrap;">{value}</div>
+          <div style="font-size:0.75em;color:{sub_color};margin-top:6px;">{sub}</div>
+        </div>"""
 
-    c4, c5, c6 = st.columns(3)
-    c4.metric("Longest Losing Streak vs S&P", f"{max_behind} yr{'s' if max_behind != 1 else ''}",
-              "consecutive years behind S&P")
-    c5.metric("Portfolio Low",  f"${port_min:,.0f}", f"{(port_min-init)/init*100:+.1f}% vs start")
-    c6.metric("S&P Low",        f"${spy_min:,.0f}",  f"{(spy_min-init)/init*100:+.1f}% vs start")
+    beat_good = years_beat >= total_years / 2
+    under_good = years_under_spy_val <= total_years / 2
+    streak_good = max_behind <= 3
+    port_good = final > spy_final
+    port_low_good = port_min >= init
+    spy_low_good = spy_min >= init
+
+    tiles = "".join([
+        _tile("📈", "Final Portfolio",    f"${final:,.0f}",     f"{total_roi*100:+.1f}% total return",       port_good),
+        _tile("📊", "S&amp;P 500",        f"${spy_final:,.0f}", f"{spy_roi*100:+.1f}% total return",         spy_roi > 0),
+        _tile("🏆", "Years Beat S&amp;P", f"{years_beat}/{total_years}", f"{years_beat/total_years*100:.0f}% of years", beat_good),
+        _tile("📉", "Yrs Under S&amp;P $", f"{years_under_spy_val}/{total_years}", f"{years_under_spy_val/total_years*100:.0f}% of years portfolio lagged", under_good),
+        _tile("🔁", "Longest Losing Streak", f"{max_behind} yr{'s' if max_behind!=1 else ''}", "consecutive yrs behind S&amp;P return", streak_good),
+        _tile("💰", "Portfolio Low",      f"${port_min:,.0f}",  f"{(port_min-init)/init*100:+.1f}% vs start", port_low_good),
+        _tile("📉", "S&amp;P Low",        f"${spy_min:,.0f}",   f"{(spy_min-init)/init*100:+.1f}% vs start",  spy_low_good),
+    ])
+    st.markdown(
+        f'<div style="display:flex;gap:8px;margin:20px 0 24px;">{tiles}</div>',
+        unsafe_allow_html=True,
+    )
 
     # -- Save button --
     save_key = f"save_{hash(config.get('display_name','') + str(final))}"
-    if st.button("💾 Save this backtest", key=save_key):
+    already_saved = any(s["name"] == config.get("display_name") and s["final"] == final
+                        for s in st.session_state["saved_backtests"])
+    if already_saved:
+        st.caption("✅ Already saved")
+    elif st.button("💾 Save this backtest", key=save_key):
         st.session_state["saved_backtests"].append({
-            "name":          config.get("display_name", scenario_input[:60]),
-            "final":         final,
-            "spy_final":     spy_final,
-            "total_roi":     total_roi,
-            "spy_roi":       spy_roi,
-            "years_beat":    years_beat,
-            "total_years":   total_years,
-            "max_behind":    max_behind,
-            "port_min":      port_min,
-            "spy_min":       spy_min,
-            "strategy_rows": rows,
-            "spy_rows":      spy_rows,
-            "start_year":    start_year,
-            "initial_capital": init,
+            "name":              config.get("display_name", ""),
+            "final":             final,
+            "spy_final":         spy_final,
+            "total_roi":         total_roi,
+            "spy_roi":           spy_roi,
+            "years_beat":        years_beat,
+            "total_years":       total_years,
+            "max_behind":        max_behind,
+            "years_under_spy_val": years_under_spy_val,
+            "port_min":          port_min,
+            "spy_min":           spy_min,
+            "strategy_rows":     rows,
+            "spy_rows":          spy_rows,
+            "start_year":        start_year,
+            "initial_capital":   init,
         })
-        st.success(f"Saved: {config.get('display_name', 'backtest')}")
         st.rerun()
 
     # -- Chart --
@@ -457,10 +501,7 @@ if run_clicked and scenario_input.strip():
             f"</details>"
         )
 
-    spy_value = float(config.get("initial_capital", 10_000.0))
-    spy_values_by_year = {}
-    for sr in spy_rows:
-        spy_values_by_year[sr["year"]] = sr["value"]
+    spy_values_by_year = spy_val_by_year
 
     html_rows = ""
     for r in rows:
@@ -520,9 +561,6 @@ if run_clicked and scenario_input.strip():
     # -- Strategy config debug (expander) --
     with st.expander("Strategy config (what the AI interpreted)"):
         st.json({k: v for k, v in config.items() if not k.startswith("_")})
-
-elif run_clicked:
-    st.warning("Please enter a scenario first.")
 
 # ---------------------------------------------------------------------------
 # Saved Backtests comparison (always visible when >= 2 saves)

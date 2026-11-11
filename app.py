@@ -34,48 +34,59 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------------------------
-# Title (left) + Settings (top right)
+# Compact horizontal settings bar (top of page, before title)
 # ---------------------------------------------------------------------------
 
-_title_col, _settings_col = st.columns([3, 1])
-with _title_col:
-    st.title("📈 Strategy Lab")
-    st.caption("Describe any investment scenario in plain English — see 25 years of results instantly.")
-with _settings_col:
-    with st.container(border=True):
-        st.markdown("**Settings**")
-        initial_capital = st.number_input("Starting capital ($)", value=10_000, step=1_000, min_value=1_000)
-        start_year = st.slider("Start year", min_value=2001, max_value=2024, value=2001)
+import os as _os
+_has_or = bool(_os.environ.get("OPENROUTER_API_KEY"))
+_has_groq = bool(_os.environ.get("GROQ_API_KEY"))
+_has_claude = bool(_os.environ.get("ANTHROPIC_API_KEY"))
+_ai_active = _has_or or _has_groq or _has_claude
+
+_tb1, _tb2, _tb3, _tb4 = st.columns([1.4, 1.6, 1.5, 2.5])
+with _tb1:
+    st.caption("Starting capital ($)")
+    initial_capital = st.number_input(
+        "Starting capital ($)", value=10_000, step=1_000, min_value=1_000,
+        label_visibility="collapsed",
+    )
+with _tb2:
+    st.caption(f"Start year")
+    start_year = st.slider(
+        "Start year", min_value=2001, max_value=2024, value=2001,
+        label_visibility="collapsed",
+    )
+with _tb3:
+    st.caption("AI interpreter")
+    if _ai_active:
+        keys_active = []
+        if _has_or: keys_active.append("OpenRouter")
+        if _has_groq: keys_active.append("Groq")
+        if _has_claude: keys_active.append("Claude")
+        st.markdown(f"🟢 **{', '.join(keys_active)}**")
+    else:
+        st.markdown("🟡 Rule-based only")
+with _tb4:
+    st.caption("Data sources")
+    st.caption("S&P 500 composition: fja05680/sp500 · Prices: yfinance")
+
+st.divider()
 
 # ---------------------------------------------------------------------------
-# Sidebar: AI status + saved backtests
+# Title
+# ---------------------------------------------------------------------------
+
+st.title("📈 Strategy Lab")
+st.caption("Describe any investment scenario in plain English — see 25 years of results instantly.")
+
+# ---------------------------------------------------------------------------
+# Sidebar: saved backtests only
 # ---------------------------------------------------------------------------
 
 if "saved_backtests" not in st.session_state:
     st.session_state["saved_backtests"] = []
 
 with st.sidebar:
-    import os as _os
-    _has_or = bool(_os.environ.get("OPENROUTER_API_KEY"))
-    _has_groq = bool(_os.environ.get("GROQ_API_KEY"))
-    _has_claude = bool(_os.environ.get("ANTHROPIC_API_KEY"))
-    if _has_or or _has_groq or _has_claude:
-        keys_active = []
-        if _has_or: keys_active.append("OpenRouter")
-        if _has_groq: keys_active.append("Groq")
-        if _has_claude: keys_active.append("Claude")
-        st.success(f"🤖 AI interpreter active ({', '.join(keys_active)})")
-    else:
-        st.warning("🔤 Rule-based interpreter only")
-        with st.expander("Enable free AI interpreter"):
-            st.markdown(
-                "**OpenRouter (free)**\n\n"
-                "1. Go to **openrouter.ai** → Sign up\n"
-                "2. Keys → Create Key\n"
-                "3. Add to Streamlit secrets:\n"
-                "```\nOPENROUTER_API_KEY = 'sk-or-...'\n```"
-            )
-    st.divider()
 
     # Saved backtests compact list
     _saved = st.session_state.get("saved_backtests", [])
@@ -98,8 +109,6 @@ with st.sidebar:
                 st.session_state["saved_backtests"] = []
                 st.rerun()
         st.divider()
-
-    st.caption("Data: S&P 500 composition via fja05680/sp500 · Prices via yfinance")
 
 # ---------------------------------------------------------------------------
 # Data loading

@@ -109,18 +109,23 @@ with st.sidebar:
                 st.session_state["saved_backtests"] = []
                 st.rerun()
 
-        # Compare selector — show in sidebar when 2+ saves exist
+        # Compare — checkboxes when 2+ saves exist
         if len(_saved) >= 2:
             st.divider()
-            st.markdown("**Compare**")
-            _names = [f"{i+1}. {s['name'][:45]}" for i, s in enumerate(_saved)]
-            _chosen_labels = st.multiselect(
-                "Pick up to 3:",
-                options=_names,
-                max_selections=3,
-                key="compare_select",
-            )
-            st.session_state["_compare_labels"] = _chosen_labels
+            st.markdown("**Compare** *(select 2 or 3)*")
+            _checked_indices = []
+            for _ci, _cs in enumerate(_saved):
+                _already = _ci in st.session_state.get("_cmp_checked", [])
+                if st.checkbox(_cs["name"][:42], value=_already, key=f"cmp_chk_{_ci}"):
+                    _checked_indices.append(_ci)
+            st.session_state["_cmp_checked"] = _checked_indices
+            _n_checked = len(_checked_indices)
+            if _n_checked >= 2:
+                if st.button("Compare", type="primary", key="sidebar_compare_btn"):
+                    st.session_state["_compare_indices"] = _checked_indices[:3]
+                    st.rerun()
+            elif _n_checked == 1:
+                st.caption("Select at least one more")
 
         st.divider()
 
@@ -399,11 +404,10 @@ if _config is not None and _result is not None:
         return f"""<div style="flex:1;min-width:0;border-radius:12px;padding:16px 14px;
             border:1px solid rgba({tint},0.3);
             background:linear-gradient(145deg,rgba({tint},0.07),rgba({tint},0.01));">
-          <div style="font-size:0.68em;text-transform:uppercase;letter-spacing:0.07em;
-               color:#888;font-weight:600;margin-bottom:8px;white-space:nowrap;
-               overflow:hidden;text-overflow:ellipsis;">{icon} {label}</div>
+          <div style="font-size:0.7em;text-transform:uppercase;letter-spacing:0.05em;
+               color:#888;font-weight:600;margin-bottom:8px;line-height:1.35;">{icon} {label}</div>
           <div style="font-size:1.3em;font-weight:700;line-height:1.2;white-space:nowrap;">{value}</div>
-          <div style="font-size:0.75em;color:{sub_color};margin-top:6px;">{sub}</div>
+          <div style="font-size:0.75em;color:{sub_color};margin-top:6px;line-height:1.35;">{sub}</div>
         </div>"""
 
     beat_good = years_beat >= total_years / 2
@@ -418,7 +422,7 @@ if _config is not None and _result is not None:
         _tile("📊", "S&amp;P 500",        f"${spy_final:,.0f}", f"{spy_roi*100:+.1f}% total return",         spy_roi > 0),
         _tile("🏆", "Years Beat S&amp;P", f"{years_beat}/{total_years}", f"{years_beat/total_years*100:.0f}% of years", beat_good),
         _tile("📉", "Yrs Under S&amp;P $", f"{years_under_spy_val}/{total_years}", f"{years_under_spy_val/total_years*100:.0f}% of years portfolio lagged", under_good),
-        _tile("🔁", "Longest Losing Streak", f"{max_behind} yr{'s' if max_behind!=1 else ''}", "consecutive yrs behind S&amp;P return", streak_good),
+        _tile("🔁", "Max Losing Streak", f"{max_behind} yr{'s' if max_behind!=1 else ''}", "consecutive yrs behind S&amp;P", streak_good),
         _tile("💰", "Portfolio Low",      f"${port_min:,.0f}",  f"{(port_min-init)/init*100:+.1f}% vs start", port_low_good),
         _tile("📉", "S&amp;P Low",        f"${spy_min:,.0f}",   f"{(spy_min-init)/init*100:+.1f}% vs start",  spy_low_good),
     ])
@@ -577,13 +581,13 @@ if _config is not None and _result is not None:
         st.json({k: v for k, v in config.items() if not k.startswith("_")})
 
 # ---------------------------------------------------------------------------
-# Comparison view — driven by sidebar multiselect
+# Comparison view — driven by sidebar checkboxes + Compare button
 # ---------------------------------------------------------------------------
 
 saved = st.session_state.get("saved_backtests", [])
-chosen_labels = st.session_state.get("_compare_labels", [])
-names = [f"{i+1}. {s['name'][:45]}" for i, s in enumerate(saved)]
-chosen = [saved[names.index(lbl)] for lbl in chosen_labels if lbl in names]
+_cmp_indices = st.session_state.get("_compare_indices", [])
+chosen = [saved[i] for i in _cmp_indices if i < len(saved)]
+chosen_labels = [s["name"][:45] for s in chosen]
 
 if len(chosen) >= 2:
     st.divider()

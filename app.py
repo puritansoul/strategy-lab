@@ -94,24 +94,31 @@ with st.sidebar:
     _saved = st.session_state.get("saved_backtests", [])
     if _saved:
         st.subheader(f"Saved Backtests ({len(_saved)})")
+        # Tighten vertical spacing between rows
+        st.markdown("""<style>
+        section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"]
+            { margin-bottom: -1rem; }
+        </style>""", unsafe_allow_html=True)
         _to_delete = None
         _checked_indices = []
         for _i, _s in enumerate(_saved):
             _already = _i in st.session_state.get("_cmp_checked", [])
-            _chk_col, _name_col, _del_col = st.columns([1, 6, 1])
+            _full_name = _s['name']
+            _display_name = (_full_name[:24] + "…") if len(_full_name) > 24 else _full_name
+            _safe_name = _full_name.replace('"', '&quot;').replace("'", "&#39;")
+            _chk_col, _name_col, _del_col = st.columns([1, 5.5, 1.5])
             if _chk_col.checkbox("", value=_already, key=f"cmp_chk_{_i}",
                                  label_visibility="collapsed"):
                 _checked_indices.append(_i)
             _name_col.markdown(
-                f"**{_s['name'][:28]}**  \n"
-                f"<span style='font-size:0.78em;color:#888;'>"
+                f"<span title=\"{_safe_name}\" style='font-size:0.85em;font-weight:600;'>{_display_name}</span><br>"
+                f"<span style='font-size:0.75em;color:#888;'>"
                 f"${_s['final']:,.0f} · {_s['total_roi']*100:+.1f}% · "
                 f"{_s['years_beat']}/{_s['total_years']} yrs</span>",
                 unsafe_allow_html=True,
             )
-            if _del_col.button("🗑", key=f"sidebar_del_{_i}", help="Delete"):
+            if _del_col.button("✕", key=f"sidebar_del_{_i}", help=f"Delete: {_display_name}"):
                 _to_delete = _i
-            st.markdown("<hr style='margin:2px 0;border-color:#333;'>", unsafe_allow_html=True)
 
         st.session_state["_cmp_checked"] = _checked_indices
 

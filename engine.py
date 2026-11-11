@@ -278,9 +278,16 @@ class DataManager:
         if not collected:
             return pd.DataFrame()
 
-        # Build sparse frame then forward-fill to every trading day
-        raw = pd.DataFrame(collected)
-        raw = raw.groupby(raw.index).last()  # drop any remaining duplicate rows
+        # Final dedup pass, then build the DataFrame without relying on pandas'
+        # internal alignment (which raises on duplicate labels in any series).
+        collected = {tk: s.groupby(level=0).last() for tk, s in collected.items()}
+        all_dates = pd.DatetimeIndex(
+            sorted(set().union(*(set(s.index) for s in collected.values())))
+        )
+        raw = pd.DataFrame(
+            {tk: s.reindex(all_dates) for tk, s in collected.items()},
+            index=all_dates,
+        )
         daily = raw.reindex(raw.index.union(prices.index)).sort_index().ffill().reindex(prices.index)
         daily.to_parquet(cache)
         return daily

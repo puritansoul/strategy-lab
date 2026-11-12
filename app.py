@@ -595,8 +595,8 @@ if _config is not None and _result is not None:
         # Tax impact columns
         if _show_tax_cols:
             pre_tax_pct = r.get("pre_tax_return", r["portfolio_return"]) * 100
-            tax_drag_pp = pre_tax_pct - ret_pct  # always >= 0
-            tax_paid = r.get("pre_tax_end_value", r["end_value"]) - r["end_value"]
+            tax_drag_pp = pre_tax_pct - ret_pct  # this year's drag only
+            tax_paid = r["start_value"] * (tax_drag_pp / 100)
             tax_cells = (
                 f"<td style='padding:6px 12px;color:#888;text-align:right;'>{pre_tax_pct:+.1f}%</td>"
                 f"<td style='padding:6px 12px;color:#c0392b;text-align:right;'>-{tax_drag_pp:.1f}pp / ${tax_paid:,.0f}</td>"

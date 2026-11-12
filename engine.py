@@ -580,11 +580,13 @@ def _aggregate_to_annual(period_rows: List[dict]) -> List[dict]:
                 "ticker_returns": {},
                 "start_value": row["start_value"],
                 "end_value": row["end_value"],
+                "pre_tax_end_value": row.get("pre_tax_end_value", row["end_value"]),
                 "buy_date": row.get("buy"),
                 "sell_date": row.get("sell"),
             }
         else:
             by_year[year]["end_value"] = row["end_value"]
+            by_year[year]["pre_tax_end_value"] = row.get("pre_tax_end_value", row["end_value"])
             by_year[year]["sell_date"] = row.get("sell")  # last period's sell
         by_year[year]["tickers"].update(row.get("tickers", []))
         by_year[year]["ticker_returns"].update(row.get("ticker_returns", {}))
@@ -593,13 +595,16 @@ def _aggregate_to_annual(period_rows: List[dict]) -> List[dict]:
     for year in sorted(by_year.keys()):
         d = by_year[year]
         sv, ev = d["start_value"], d["end_value"]
+        pre_ev = d.get("pre_tax_end_value", ev)
         result.append({
             "year": year,
             "tickers": sorted(d["tickers"]),
             "ticker_returns": d["ticker_returns"],
             "portfolio_return": (ev - sv) / sv if sv > 0 else 0.0,
+            "pre_tax_return": (pre_ev - sv) / sv if sv > 0 else 0.0,
             "start_value": sv,
             "end_value": ev,
+            "pre_tax_end_value": pre_ev,
             "buy_date": d.get("buy_date"),
             "sell_date": d.get("sell_date"),
         })
@@ -629,6 +634,7 @@ def run_backtest(config: dict, dm: DataManager) -> dict:
     periods = _generate_periods(start_year, end_year, frequency, buy_offset, hold_months)
 
     portfolio_value = capital
+    pre_tax_value = capital  # parallel tracker — what value would be without tax drag
     period_rows: List[dict] = []
 
     for period in periods:
@@ -656,7 +662,7 @@ def run_backtest(config: dict, dm: DataManager) -> dict:
             rets = {tk: dm.return_between(tk, sel_start_str, sel_end_str) for tk in universe}
             rets = {k: v for k, v in rets.items() if v is not None}
             if not rets:
-                period_rows.append(_empty_period_row(period, portfolio_value))
+                period_rows.append(_empty_period_row(period, portfolio_value, pre_tax_value))
                 continue
             reverse = method in ("top_n_prior_return", "top_n_momentum")
             ranked = [t for t, _ in sorted(rets.items(), key=lambda x: x[1], reverse=reverse)]
@@ -665,7 +671,7 @@ def run_backtest(config: dict, dm: DataManager) -> dict:
         elif method == "top_n_market_cap":
             caps = dm.market_cap_proxy(list(universe), year)
             if not caps:
-                period_rows.append(_empty_period_row(period, portfolio_value))
+                period_rows.append(_empty_period_row(period, portfolio_value, pre_tax_value))
                 continue
             ranked = [t for t, _ in sorted(caps.items(), key=lambda x: x[1], reverse=True)]
             selected = _dedup_tickers(ranked, n)
@@ -681,7 +687,7 @@ def run_backtest(config: dict, dm: DataManager) -> dict:
                 if tk in caps_then and caps_then[tk] > 0
             }
             if not growth:
-                period_rows.append(_empty_period_row(period, portfolio_value))
+                period_rows.append(_empty_period_row(period, portfolio_value, pre_tax_value))
                 continue
             ranked = [t for t, _ in sorted(growth.items(), key=lambda x: x[1], reverse=True)]
             selected = _dedup_tickers(ranked, n)
@@ -700,23 +706,27 @@ def run_backtest(config: dict, dm: DataManager) -> dict:
         ticker_rets = [(tk, r) for tk, r in ticker_rets if r is not None]
 
         if not ticker_rets:
-            period_rows.append(_empty_period_row(period, portfolio_value))
+            period_rows.append(_empty_period_row(period, portfolio_value, pre_tax_value))
             continue
 
         avg_ret = float(np.mean([r for _, r in ticker_rets]))
+        pre_tax_ret = avg_ret
         # Apply tax drag: gains are taxed, losses are not (no tax-loss harvesting modelled)
         if apply_tax and avg_ret > 0:
             avg_ret = avg_ret * (1 - tax_rate)
         start_val = portfolio_value
         portfolio_value *= 1 + avg_ret
+        pre_tax_value *= 1 + pre_tax_ret
 
         period_rows.append({
             **period,
             "tickers": [tk for tk, _ in ticker_rets],
             "ticker_returns": {tk: r for tk, r in ticker_rets},
             "period_return": avg_ret,
+            "pre_tax_period_return": pre_tax_ret,
             "start_value": start_val,
             "end_value": portfolio_value,
+            "pre_tax_end_value": pre_tax_value,
         })
 
     strategy_rows = _aggregate_to_annual(period_rows)
@@ -743,12 +753,14 @@ def run_backtest(config: dict, dm: DataManager) -> dict:
     }
 
 
-def _empty_period_row(period: dict, value: float) -> dict:
+def _empty_period_row(period: dict, value: float, pre_tax_v: Optional[float] = None) -> dict:
     return {
         **period,
         "tickers": [],
         "ticker_returns": {},
         "period_return": 0.0,
+        "pre_tax_period_return": 0.0,
         "start_value": value,
         "end_value": value,
+        "pre_tax_end_value": pre_tax_v if pre_tax_v is not None else value,
     }

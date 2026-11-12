@@ -568,6 +568,8 @@ if _config is not None and _result is not None:
 
     spy_values_by_year = spy_val_by_year
 
+    _show_tax_cols = config.get("tax_rate", 0) > 0
+
     html_rows = ""
     for r in rows:
         held_cell = _held_cell(r["tickers"])
@@ -586,18 +588,36 @@ if _config is not None and _result is not None:
         spy_val = spy_values_by_year.get(r["year"])
         spy_val_str = f"${spy_val:,.0f}" if spy_val is not None else "—"
 
+        # Tax impact columns
+        if _show_tax_cols:
+            pre_tax_pct = r.get("pre_tax_return", r["portfolio_return"]) * 100
+            tax_drag_pp = pre_tax_pct - ret_pct  # always >= 0
+            tax_paid = r.get("pre_tax_end_value", r["end_value"]) - r["end_value"]
+            tax_cells = (
+                f"<td style='padding:6px 12px;color:#888;text-align:right;'>{pre_tax_pct:+.1f}%</td>"
+                f"<td style='padding:6px 12px;color:#c0392b;text-align:right;'>-{tax_drag_pp:.1f}pp / ${tax_paid:,.0f}</td>"
+            )
+        else:
+            tax_cells = ""
+
         html_rows += f"""
         <tr>
           <td style='padding:6px 12px;'>{r['year']}</td>
           <td style='padding:6px 12px;font-size:0.88em;'>{held_cell}</td>
           <td style='padding:6px 12px;color:{best_color};font-size:0.88em;'>{best_str}</td>
           <td style='padding:6px 12px;color:{_color(f"{ret_pct:+.1f}%")};text-align:right;font-weight:600;'>{ret_pct:+.1f}%</td>
+          {tax_cells}
           <td style='padding:6px 12px;color:{_color(f"{spy_pct:+.1f}%")};text-align:right;font-weight:600;'>{spy_pct:+.1f}%</td>
           <td style='padding:6px 12px;color:{_color(f"{delta:+.1f}pp")};text-align:right;font-weight:600;'>{delta:+.1f}pp</td>
           <td style='padding:6px 12px;text-align:right;font-weight:600;color:{"#1a7a3a" if spy_val is None or r["end_value"] >= spy_val else "#c0392b"};'>${r['end_value']:,.0f}</td>
           <td style='padding:6px 12px;text-align:right;'>{spy_val_str}</td>
         </tr>"""
 
+    _tax_headers = (
+        "<th style='text-align:right;color:#888;'>Pre-tax</th>"
+        "<th style='text-align:right;color:#c0392b;'>Tax drag</th>"
+        if _show_tax_cols else ""
+    )
     html_table = f"""
     <style>
       .strat-table {{ border-collapse: collapse; width: 100%; font-size:0.93em; }}
@@ -613,6 +633,7 @@ if _config is not None and _result is not None:
         <th>Held</th>
         <th>Best ticker</th>
         <th style='text-align:right;'>Strategy return</th>
+        {_tax_headers}
         <th style='text-align:right;'>SPY return</th>
         <th style='text-align:right;'>vs SPY</th>
         <th style='text-align:right;'>Portfolio value</th>

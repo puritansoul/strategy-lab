@@ -616,6 +616,12 @@ def run_backtest(config: dict, dm: DataManager) -> dict:
     buy_offset = int(config.get("buy_offset_months", 0))
     hold_months = config.get("hold_months")  # None = natural period length
 
+    # Tax drag: applied to gains on each rebalance for active strategies.
+    # Hold/index strategies are exempt — no forced annual selling.
+    _no_tax_methods = {"hold_ticker", "equal_weight_sp500", "equal_weight_nasdaq"}
+    tax_rate = float(config.get("tax_rate", 0.0))
+    apply_tax = tax_rate > 0 and method not in _no_tax_methods
+
     # Default lookback: 6 months for momentum methods, 12 for everything else
     default_lb = 6 if method in ("top_n_momentum", "bottom_n_momentum") else 12
     lookback_months = int(config.get("selection_lookback_months", config.get("lookback_months", default_lb)))
@@ -698,6 +704,9 @@ def run_backtest(config: dict, dm: DataManager) -> dict:
             continue
 
         avg_ret = float(np.mean([r for _, r in ticker_rets]))
+        # Apply tax drag: gains are taxed, losses are not (no tax-loss harvesting modelled)
+        if apply_tax and avg_ret > 0:
+            avg_ret = avg_ret * (1 - tax_rate)
         start_val = portfolio_value
         portfolio_value *= 1 + avg_ret
 

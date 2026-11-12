@@ -45,7 +45,7 @@ _has_claude = bool(_os.environ.get("ANTHROPIC_API_KEY"))
 _ai_active = _has_or or _has_groq or _has_claude
 
 with st.expander("⚙️ Settings", expanded=False):
-    _tb1, _tb2, _tb3, _tb4 = st.columns([1.4, 1.6, 1.5, 2.5])
+    _tb1, _tb2, _tb3, _tb4, _tb5 = st.columns([1.4, 1.4, 1.2, 1.4, 2.0])
     with _tb1:
         st.caption("Starting capital ($)")
         initial_capital = st.number_input(
@@ -59,6 +59,14 @@ with st.expander("⚙️ Settings", expanded=False):
             label_visibility="collapsed",
         )
     with _tb3:
+        st.caption("Tax rate")
+        _tax_options = {"0% (pre-tax)": 0.0, "15%": 0.15, "20%": 0.20, "25%": 0.25, "30%": 0.30, "37%": 0.37}
+        _tax_label = st.selectbox(
+            "Tax rate", options=list(_tax_options.keys()),
+            label_visibility="collapsed",
+        )
+        tax_rate = _tax_options[_tax_label]
+    with _tb4:
         st.caption("AI interpreter")
         if _ai_active:
             keys_active = []
@@ -68,7 +76,7 @@ with st.expander("⚙️ Settings", expanded=False):
             st.markdown(f"🟢 **{', '.join(keys_active)}**")
         else:
             st.markdown("🟡 Rule-based only")
-    with _tb4:
+    with _tb5:
         st.caption("Data sources")
         st.caption("S&P 500 composition: fja05680/sp500 · Prices: yfinance")
 
@@ -381,6 +389,7 @@ if run_clicked and scenario_input.strip():
             st.caption("🔤 Interpreted via keyword matching — verify the strategy explanation below.")
 
     with st.spinner("Running backtest…"):
+        config["tax_rate"] = tax_rate
         result = run_backtest(config, dm)
 
     st.session_state["last_run_config"] = config
@@ -399,7 +408,8 @@ if _config is not None and _result is not None:
 
     # -- Strategy explanation --
     st.divider()
-    st.subheader(f"Results: _{config.get('display_name', '')}_")
+    _tax_suffix = f" · {int(config.get('tax_rate',0)*100)}% tax" if config.get("tax_rate", 0) > 0 else ""
+    st.subheader(f"Results: _{config.get('display_name', '')}{_tax_suffix}_")
 
     with st.expander("📋 What the AI understood — strategy explanation + real example", expanded=False):
         _render_strategy_explanation(config, result, dm)

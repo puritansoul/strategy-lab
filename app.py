@@ -568,7 +568,11 @@ if _config is not None and _result is not None:
 
     spy_values_by_year = spy_val_by_year
 
-    _show_tax_cols = config.get("tax_rate", 0) > 0
+    _tax_rate = config.get("tax_rate", 0)
+    _has_pretax_data = _tax_rate > 0 and any("pre_tax_return" in r for r in rows)
+    _show_tax_cols = _has_pretax_data
+    if _tax_rate > 0 and not _has_pretax_data:
+        st.info("ℹ️ Re-run the backtest to see per-year tax drag (results are from a previous session).")
 
     html_rows = ""
     for r in rows:

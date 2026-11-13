@@ -162,7 +162,7 @@ with st.sidebar:
 # Data loading
 # ---------------------------------------------------------------------------
 
-_DM_VERSION = "4"  # bump when DataManager API changes to force cache invalidation
+_DM_VERSION = "5"  # bump when DataManager API changes to force cache invalidation
 
 @st.cache_resource(show_spinner=False)
 def get_data_manager(version: str = _DM_VERSION):

@@ -644,7 +644,7 @@ if _config is not None and _result is not None:
     html_table = (
         "<style>"
         ".strat-table{border-collapse:collapse;width:100%;font-size:0.93em;}"
-        ".strat-table th{font-weight:600;padding:8px 12px;border-bottom:2px solid #ddd;text-align:left;}"
+        ".strat-table th{font-weight:600;padding:8px 12px;border-bottom:2px solid #ddd;text-align:left;position:sticky;top:0;background:#fff;z-index:1;}"
         ".strat-table td{border-bottom:1px solid #eee;}"
         ".strat-table tr:hover td{background:rgba(0,0,0,0.03);}"
         "details summary::-webkit-details-marker{display:none;}"

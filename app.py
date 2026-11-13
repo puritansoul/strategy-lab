@@ -605,12 +605,19 @@ if _config is not None and _result is not None:
         else:
             tax_cells = ""
 
+        # Cumulative returns from day 1
+        cum_my = (r["end_value"] - init) / init * 100 if init > 0 else 0
+        cum_spy = (spy_val - init) / init * 100 if (spy_val is not None and init > 0) else None
+
         # Build each row as a single-line string — no newlines or indented-only lines,
         # which CommonMark would interpret as blank lines and close the HTML block.
         _ret_color = _color(f"{ret_pct:+.1f}%")
         _spy_color = _color(f"{spy_pct:+.1f}%")
         _delta_color = _color(f"{delta:+.1f}%")
+        _cum_my_color = _color(f"{cum_my:+.1f}%")
+        _cum_spy_color = _color(f"{cum_spy:+.1f}%") if cum_spy is not None else "inherit"
         _pv_color = "#1a7a3a" if spy_val is None or r["end_value"] >= spy_val else "#c0392b"
+        cum_spy_str = f"{cum_spy:+.1f}%" if cum_spy is not None else "—"
         html_rows += (
             "<tr>"
             f"<td style='padding:6px 12px;'>{r['year']}</td>"
@@ -622,6 +629,8 @@ if _config is not None and _result is not None:
             f"<td style='padding:6px 12px;color:{_delta_color};text-align:right;font-weight:600;'>{delta:+.1f}%</td>"
             f"<td style='padding:6px 12px;text-align:right;font-weight:600;color:{_pv_color};'>${r['end_value']:,.0f}</td>"
             f"<td style='padding:6px 12px;text-align:right;'>{spy_val_str}</td>"
+            f"<td style='padding:6px 12px;color:{_cum_my_color};text-align:right;'>{cum_my:+.1f}%</td>"
+            f"<td style='padding:6px 12px;color:{_cum_spy_color};text-align:right;'>{cum_spy_str}</td>"
             "</tr>"
         )
 
@@ -648,6 +657,8 @@ if _config is not None and _result is not None:
         "<th style='text-align:right;'>Edge</th>"
         "<th style='text-align:right;'>My $</th>"
         "<th style='text-align:right;'>SPY $</th>"
+        "<th style='text-align:right;'>My cumul.</th>"
+        "<th style='text-align:right;'>SPY cumul.</th>"
         "</tr></thead><tbody>" + html_rows + "</tbody></table>"
     )
     st.markdown(html_table, unsafe_allow_html=True)

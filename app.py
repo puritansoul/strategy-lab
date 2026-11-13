@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+import streamlit.components.v1 as _components
 
 # Inject Streamlit Cloud secrets into environment variables
 for _key in ("OPENROUTER_API_KEY", "GROQ_API_KEY", "ANTHROPIC_API_KEY"):
@@ -21,29 +22,126 @@ for _key in ("OPENROUTER_API_KEY", "GROQ_API_KEY", "ANTHROPIC_API_KEY"):
 
 from engine import DataManager, run_backtest
 from interpreter import interpret
-from persistence import load_backtests, save_backtest, delete_backtest, delete_all_backtests
+from persistence import (
+    load_backtests, save_backtest, delete_backtest, delete_all_backtests,
+    load_search_history, save_search_history,
+)
 
-_HISTORY_FILE = os.path.join(os.path.dirname(__file__), "data", "search_history.json")
 
-def _load_search_history() -> list:
-    try:
-        if os.path.exists(_HISTORY_FILE):
-            with open(_HISTORY_FILE) as f:
-                return json.load(f)[:15]
-    except Exception:
-        pass
-    return []
-
-def _save_search_history(scenario: str, history: list) -> list:
+def _update_history(scenario: str, history: list) -> list:
     history = [h for h in history if h.strip().lower() != scenario.strip().lower()]
     history.insert(0, scenario.strip())
     history = history[:15]
-    try:
-        with open(_HISTORY_FILE, "w") as f:
-            json.dump(history, f)
-    except Exception:
-        pass
+    save_search_history(history)
     return history
+
+
+def _autocomplete_js(history: list) -> None:
+    history_json = json.dumps(history)
+    _components.html(f"""
+<script>
+(function() {{
+  var HISTORY = {history_json};
+
+  function init() {{
+    var doc = parent.document;
+    var forms = doc.querySelectorAll('[data-testid="stForm"]');
+    if (!forms.length) return false;
+    var form = forms[forms.length - 1];
+    var input = form.querySelector('input[type="text"]');
+    if (!input || input._acReady) return false;
+    input._acReady = true;
+
+    var wrap = input.closest('[data-testid="stTextInput"]') || input.parentNode;
+    wrap.style.position = 'relative';
+
+    var dd = doc.createElement('div');
+    dd.style.cssText = 'position:absolute;left:0;right:0;top:100%;z-index:9999;'
+      + 'background:#fff;border:1px solid #dadce0;border-top:none;'
+      + 'border-radius:0 0 24px 24px;box-shadow:0 4px 12px rgba(0,0,0,.12);'
+      + 'display:none;overflow:hidden;';
+    wrap.appendChild(dd);
+
+    var active = -1;
+
+    function matches(q) {{
+      if (!HISTORY.length) return [];
+      var lq = (q || '').toLowerCase().trim();
+      var arr = lq ? HISTORY.filter(function(h) {{ return h.toLowerCase().includes(lq); }}) : HISTORY;
+      return arr.slice(0, 8);
+    }}
+
+    function render(q) {{
+      var items = matches(q);
+      if (!items.length) {{ dd.style.display = 'none'; return; }}
+      active = -1;
+      dd.innerHTML = '';
+      items.forEach(function(item, i) {{
+        var row = doc.createElement('div');
+        row.dataset.idx = i;
+        row.style.cssText = 'padding:10px 20px;cursor:pointer;font-size:14px;'
+          + 'display:flex;align-items:center;gap:12px;color:#202124;';
+        row.innerHTML = '<span style="opacity:.4;font-size:16px;">🕐</span>'
+          + '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'
+          + item.replace(/</g,'&lt;') + '</span>';
+        row.addEventListener('mouseover', function() {{
+          dd.querySelectorAll('[data-idx]').forEach(function(r) {{ r.style.background=''; }});
+          row.style.background = '#f8f9fa';
+          active = i;
+        }});
+        row.addEventListener('mousedown', function(e) {{
+          e.preventDefault();
+          fill(item);
+        }});
+        dd.appendChild(row);
+      }});
+      dd.style.display = 'block';
+    }}
+
+    function fill(val) {{
+      var setter = Object.getOwnPropertyDescriptor(parent.HTMLInputElement.prototype,'value').set;
+      setter.call(input, val);
+      input.dispatchEvent(new parent.Event('input', {{bubbles:true}}));
+      dd.style.display = 'none';
+      setTimeout(function() {{
+        var btn = form.querySelector('[data-testid="stFormSubmitButton"] button, button[kind="primaryFormSubmit"]');
+        if (btn) btn.click();
+      }}, 60);
+    }}
+
+    input.addEventListener('focus', function() {{ render(input.value); }});
+    input.addEventListener('input', function() {{ render(input.value); }});
+    input.addEventListener('keydown', function(e) {{
+      var rows = dd.querySelectorAll('[data-idx]');
+      if (e.key === 'ArrowDown') {{
+        e.preventDefault();
+        active = Math.min(active + 1, rows.length - 1);
+        rows.forEach(function(r,i) {{ r.style.background = i===active ? '#f8f9fa' : ''; }});
+      }} else if (e.key === 'ArrowUp') {{
+        e.preventDefault();
+        active = Math.max(active - 1, -1);
+        rows.forEach(function(r,i) {{ r.style.background = i===active ? '#f8f9fa' : ''; }});
+      }} else if (e.key === 'Enter' && active >= 0 && dd.style.display !== 'none') {{
+        e.preventDefault();
+        var row = rows[active];
+        if (row) fill(row.querySelector('span:last-child').textContent);
+      }} else if (e.key === 'Escape') {{
+        dd.style.display = 'none'; active = -1;
+      }}
+    }});
+    input.addEventListener('blur', function() {{
+      setTimeout(function() {{ dd.style.display = 'none'; }}, 150);
+    }});
+    return true;
+  }}
+
+  var tries = 0;
+  var iv = setInterval(function() {{
+    if (init() || ++tries > 40) clearInterval(iv);
+  }}, 150);
+}})();
+</script>
+""", height=0)
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -244,7 +342,7 @@ if "last_run_config" not in st.session_state:
 if "last_run_result" not in st.session_state:
     st.session_state["last_run_result"] = None
 if "search_history" not in st.session_state:
-    st.session_state["search_history"] = _load_search_history()
+    st.session_state["search_history"] = load_search_history()
 
 with st.expander("Scenario Examples", expanded=True):
     cols = st.columns(4)
@@ -253,20 +351,7 @@ with st.expander("Scenario Examples", expanded=True):
             st.session_state["scenario_text"] = ex
             st.session_state["auto_run"] = True
 
-# Recent searches — click any to re-run
-_history = st.session_state.get("search_history", [])
-if _history:
-    with st.expander(f"Recent searches ({len(_history)})", expanded=False):
-        _n_per_row = 3
-        for _row_start in range(0, len(_history), _n_per_row):
-            _row_items = _history[_row_start:_row_start + _n_per_row]
-            _hcols = st.columns(len(_row_items))
-            for _j, _h in enumerate(_row_items):
-                _label = (_h[:48] + "…") if len(_h) > 48 else _h
-                if _hcols[_j].button(_label, key=f"hist_{_row_start + _j}", use_container_width=True):
-                    st.session_state["scenario_text"] = _h
-                    st.session_state["auto_run"] = True
-                    st.rerun()
+_autocomplete_js(st.session_state.get("search_history", []))
 
 with st.form("scenario_form", clear_on_submit=False):
     scenario_input = st.text_input(
@@ -432,7 +517,7 @@ if run_clicked and scenario_input.strip():
 
     st.session_state["last_run_config"] = config
     st.session_state["last_run_result"] = result
-    st.session_state["search_history"] = _save_search_history(
+    st.session_state["search_history"] = _update_history(
         scenario_input.strip(), st.session_state.get("search_history", [])
     )
 

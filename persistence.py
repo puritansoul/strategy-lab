@@ -124,3 +124,35 @@ def delete_all_backtests() -> None:
         )
     except Exception:
         pass
+
+
+def load_search_history() -> list:
+    url, key = _config()
+    if not url or not key:
+        return []
+    try:
+        r = requests.get(
+            f"{url}/rest/v1/search_history?select=searches&id=eq.1",
+            headers=_headers(key),
+            timeout=10,
+        )
+        if r.ok and r.json():
+            return r.json()[0].get("searches", [])
+    except Exception:
+        pass
+    return []
+
+
+def save_search_history(searches: list) -> None:
+    url, key = _config()
+    if not url or not key:
+        return
+    try:
+        requests.patch(
+            f"{url}/rest/v1/search_history?id=eq.1",
+            headers={**_headers(key), "Prefer": "return=minimal"},
+            json={"searches": searches[:15]},
+            timeout=10,
+        )
+    except Exception:
+        pass

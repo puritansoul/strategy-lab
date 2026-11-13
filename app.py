@@ -616,8 +616,8 @@ if _config is not None and _result is not None:
             f"<td style='padding:6px 12px;'>{r['year']}</td>"
             f"<td style='padding:6px 12px;font-size:0.88em;'>{held_cell}</td>"
             f"<td style='padding:6px 12px;color:{best_color};font-size:0.88em;'>{best_str}</td>"
-            f"<td style='padding:6px 12px;color:{_ret_color};text-align:right;font-weight:600;'>{ret_pct:+.1f}%</td>"
             + tax_cells +
+            f"<td style='padding:6px 12px;color:{_ret_color};text-align:right;font-weight:600;'>{ret_pct:+.1f}%</td>"
             f"<td style='padding:6px 12px;color:{_spy_color};text-align:right;font-weight:600;'>{spy_pct:+.1f}%</td>"
             f"<td style='padding:6px 12px;color:{_delta_color};text-align:right;font-weight:600;'>{delta:+.1f}%</td>"
             f"<td style='padding:6px 12px;text-align:right;font-weight:600;color:{_pv_color};'>${r['end_value']:,.0f}</td>"
@@ -626,7 +626,7 @@ if _config is not None and _result is not None:
         )
 
     _tax_headers = (
-        "<th style='text-align:right;color:#888;'>Gain</th>"
+        "<th style='text-align:right;color:#888;'>Pre-Tax Gain</th>"
         "<th style='text-align:right;color:#c0392b;'>Tax drag</th>"
         if _show_tax_cols else ""
     )
@@ -642,8 +642,8 @@ if _config is not None and _result is not None:
         "</style>"
         "<table class='strat-table'><thead><tr>"
         "<th>Year</th><th>Held</th><th>Best pick</th>"
-        "<th style='text-align:right;'>Return</th>"
         + _tax_headers +
+        "<th style='text-align:right;'>Post-Tax Return</th>"
         "<th style='text-align:right;'>SPY</th>"
         "<th style='text-align:right;'>Edge</th>"
         "<th style='text-align:right;'>My $</th>"

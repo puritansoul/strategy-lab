@@ -643,13 +643,15 @@ if _config is not None and _result is not None:
     # that CommonMark would treat as blank lines and close the HTML block.
     html_table = (
         "<style>"
+        ".strat-wrap{max-height:70vh;overflow-y:auto;}"
         ".strat-table{border-collapse:collapse;width:100%;font-size:0.93em;}"
-        ".strat-table th{font-weight:600;padding:8px 12px;border-bottom:2px solid #ddd;text-align:left;position:sticky;top:0;background:#fff;z-index:1;}"
+        ".strat-table th{font-weight:600;padding:8px 12px;border-bottom:2px solid #ddd;text-align:left;"
+        "position:sticky;top:0;background:#fff;z-index:1;box-shadow:0 1px 0 #ddd;}"
         ".strat-table td{border-bottom:1px solid #eee;}"
         ".strat-table tr:hover td{background:rgba(0,0,0,0.03);}"
         "details summary::-webkit-details-marker{display:none;}"
         "</style>"
-        "<table class='strat-table'><thead><tr>"
+        "<div class='strat-wrap'><table class='strat-table'><thead><tr>"
         "<th>Year</th><th>Held</th><th>Best pick</th>"
         + _tax_headers +
         "<th style='text-align:right;'>Post-Tax Return</th>"
@@ -659,7 +661,7 @@ if _config is not None and _result is not None:
         "<th style='text-align:right;'>SPY $</th>"
         "<th style='text-align:right;'>My cumul.</th>"
         "<th style='text-align:right;'>SPY cumul.</th>"
-        "</tr></thead><tbody>" + html_rows + "</tbody></table>"
+        "</tr></thead><tbody>" + html_rows + "</tbody></table></div>"
     )
     st.markdown(html_table, unsafe_allow_html=True)
 

@@ -331,42 +331,43 @@ class DataManager:
     def shares_loaded(self) -> bool:
         return (DATA_DIR / "shares.json").exists()
 
-    def market_cap_proxy(self, tickers: List[str], year: int) -> Dict[str, float]:
-        """Market cap = price × shares outstanding.
+    def _market_caps_df(self) -> Optional[pd.DataFrame]:
+        if not hasattr(self, "_mc_cache"):
+            cache = DATA_DIR / "market_caps.parquet"
+            self._mc_cache = pd.read_parquet(cache) if cache.exists() else None
+        return self._mc_cache
 
-        Uses historical year-start shares (shares_history.parquet) when available,
-        falls back to current snapshot (shares.json) for any gaps.
-        Tickers with no shares data are omitted so market_cap filters treat them
-        as unknown (excluded) rather than using a nonsense value.
+    def market_cap_proxy(self, tickers: List[str], year: int) -> Dict[str, float]:
+        """Market cap lookup from precomputed market_caps.parquet (split-adjusted).
+
+        Falls back to live price × shares computation if the parquet is missing.
+        Tickers with no data are omitted so callers treat them as unknown (excluded).
         """
+        mc = self._market_caps_df()
+        if mc is not None and year in mc.index:
+            row = mc.loc[year]
+            return {tk: float(row[tk]) for tk in tickers if tk in row.index and pd.notna(row[tk]) and row[tk] > 0}
+
+        # Fallback: live computation (used only if market_caps.parquet is absent)
         date_str = f"{year}-01-01"
         hist = self._shares_history_df()
         snap = self.shares_cache() if self.shares_loaded() else {}
-
         out: Dict[str, float] = {}
         for tk in tickers:
             price = self.price_at(tk, date_str)
             if not price:
                 continue
-
             shares = None
-            # 1. Historical (accurate)
             if hist is not None and tk in hist.columns and year in hist.index:
                 v = hist.loc[year, tk]
-                # Sanity check: S&P 500 members always have ≥1M shares.
-                # Values below this indicate the SEC filing used non-standard units
-                # (e.g. reported in millions), which produces nonsense market caps.
                 if pd.notna(v) and v >= 1_000_000:
                     shares = float(v)
-            # 2. Snapshot fallback (less accurate for old years)
             if shares is None and tk in snap:
                 s = snap[tk]
                 if s >= 1_000_000:
                     shares = s
-
             if shares:
                 out[tk] = price * shares
-            # else omit — unknown market cap, filter will exclude
         return out
 
     def january_return(self, ticker: str, year: int) -> Optional[float]:

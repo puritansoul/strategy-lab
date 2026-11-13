@@ -599,7 +599,7 @@ if _config is not None and _result is not None:
             tax_paid = r["start_value"] * (tax_drag_pp / 100)
             tax_cells = (
                 f"<td style='padding:6px 12px;color:#888;text-align:right;'>{pre_tax_pct:+.1f}%</td>"
-                f"<td style='padding:6px 12px;color:#c0392b;text-align:right;'>-{tax_drag_pp:.1f}pp"
+                f"<td style='padding:6px 12px;color:#c0392b;text-align:right;'>-{tax_drag_pp:.1f}%"
                 f" / ${tax_paid:,.0f}</td>"
             )
         else:
@@ -609,7 +609,7 @@ if _config is not None and _result is not None:
         # which CommonMark would interpret as blank lines and close the HTML block.
         _ret_color = _color(f"{ret_pct:+.1f}%")
         _spy_color = _color(f"{spy_pct:+.1f}%")
-        _delta_color = _color(f"{delta:+.1f}pp")
+        _delta_color = _color(f"{delta:+.1f}%")
         _pv_color = "#1a7a3a" if spy_val is None or r["end_value"] >= spy_val else "#c0392b"
         html_rows += (
             "<tr>"
@@ -619,7 +619,7 @@ if _config is not None and _result is not None:
             f"<td style='padding:6px 12px;color:{_ret_color};text-align:right;font-weight:600;'>{ret_pct:+.1f}%</td>"
             + tax_cells +
             f"<td style='padding:6px 12px;color:{_spy_color};text-align:right;font-weight:600;'>{spy_pct:+.1f}%</td>"
-            f"<td style='padding:6px 12px;color:{_delta_color};text-align:right;font-weight:600;'>{delta:+.1f}pp</td>"
+            f"<td style='padding:6px 12px;color:{_delta_color};text-align:right;font-weight:600;'>{delta:+.1f}%</td>"
             f"<td style='padding:6px 12px;text-align:right;font-weight:600;color:{_pv_color};'>${r['end_value']:,.0f}</td>"
             f"<td style='padding:6px 12px;text-align:right;'>{spy_val_str}</td>"
             "</tr>"

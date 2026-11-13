@@ -626,7 +626,7 @@ if _config is not None and _result is not None:
         )
 
     _tax_headers = (
-        "<th style='text-align:right;color:#888;'>Pre-tax</th>"
+        "<th style='text-align:right;color:#888;'>Gain</th>"
         "<th style='text-align:right;color:#c0392b;'>Tax drag</th>"
         if _show_tax_cols else ""
     )
@@ -641,13 +641,13 @@ if _config is not None and _result is not None:
         "details summary::-webkit-details-marker{display:none;}"
         "</style>"
         "<table class='strat-table'><thead><tr>"
-        "<th>Year</th><th>Held</th><th>Best ticker</th>"
-        "<th style='text-align:right;'>Strategy return</th>"
+        "<th>Year</th><th>Held</th><th>Best pick</th>"
+        "<th style='text-align:right;'>Return</th>"
         + _tax_headers +
-        "<th style='text-align:right;'>SPY return</th>"
-        "<th style='text-align:right;'>vs SPY</th>"
-        "<th style='text-align:right;'>Portfolio value</th>"
-        "<th style='text-align:right;'>SPY value</th>"
+        "<th style='text-align:right;'>SPY</th>"
+        "<th style='text-align:right;'>Edge</th>"
+        "<th style='text-align:right;'>My $</th>"
+        "<th style='text-align:right;'>SPY $</th>"
         "</tr></thead><tbody>" + html_rows + "</tbody></table>"
     )
     st.markdown(html_table, unsafe_allow_html=True)

@@ -391,6 +391,13 @@ if run_clicked and scenario_input.strip():
     with st.spinner("Running backtest…"):
         config["tax_rate"] = tax_rate
         result = run_backtest(config, dm)
+        if config.get("selection_method") == "top_n_market_cap":
+            _debug_caps = dm.market_cap_proxy(list(dm.members_at_date(
+                __import__("pandas").Timestamp("2020-01-01"))), 2020)
+            _top5_debug = sorted(_debug_caps.items(), key=lambda x: x[1], reverse=True)[:5]
+            st.caption(f"DEBUG 2020 top-5 caps: {[(t, f'${v/1e9:.0f}B') for t,v in _top5_debug]}"
+                       f" | C={_debug_caps.get('C',0)/1e9:.0f}B"
+                       f" | shares_parquet_mtime={__import__('pathlib').Path('data/shares_history.parquet').stat().st_mtime:.0f}")
 
     st.session_state["last_run_config"] = config
     st.session_state["last_run_result"] = result

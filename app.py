@@ -23,6 +23,28 @@ from engine import DataManager, run_backtest
 from interpreter import interpret
 from persistence import load_backtests, save_backtest, delete_backtest, delete_all_backtests
 
+_HISTORY_FILE = os.path.join(os.path.dirname(__file__), "data", "search_history.json")
+
+def _load_search_history() -> list:
+    try:
+        if os.path.exists(_HISTORY_FILE):
+            with open(_HISTORY_FILE) as f:
+                return json.load(f)[:15]
+    except Exception:
+        pass
+    return []
+
+def _save_search_history(scenario: str, history: list) -> list:
+    history = [h for h in history if h.strip().lower() != scenario.strip().lower()]
+    history.insert(0, scenario.strip())
+    history = history[:15]
+    try:
+        with open(_HISTORY_FILE, "w") as f:
+            json.dump(history, f)
+    except Exception:
+        pass
+    return history
+
 # ---------------------------------------------------------------------------
 # Page config
 # ---------------------------------------------------------------------------
@@ -221,6 +243,8 @@ if "last_run_config" not in st.session_state:
     st.session_state["last_run_config"] = None
 if "last_run_result" not in st.session_state:
     st.session_state["last_run_result"] = None
+if "search_history" not in st.session_state:
+    st.session_state["search_history"] = _load_search_history()
 
 with st.expander("Scenario Examples", expanded=True):
     cols = st.columns(4)
@@ -229,15 +253,29 @@ with st.expander("Scenario Examples", expanded=True):
             st.session_state["scenario_text"] = ex
             st.session_state["auto_run"] = True
 
-scenario_input = st.text_area(
-    "Or describe your own scenario:",
-    placeholder="e.g. 'What if I bought the top 3 performing stocks from the prior year and held equally?'",
-    height=80,
-    key="scenario_text",
-)
+# Recent searches — click any to re-run
+_history = st.session_state.get("search_history", [])
+if _history:
+    with st.expander(f"Recent searches ({len(_history)})", expanded=False):
+        _n_per_row = 3
+        for _row_start in range(0, len(_history), _n_per_row):
+            _row_items = _history[_row_start:_row_start + _n_per_row]
+            _hcols = st.columns(len(_row_items))
+            for _j, _h in enumerate(_row_items):
+                _label = (_h[:48] + "…") if len(_h) > 48 else _h
+                if _hcols[_j].button(_label, key=f"hist_{_row_start + _j}", use_container_width=True):
+                    st.session_state["scenario_text"] = _h
+                    st.session_state["auto_run"] = True
+                    st.rerun()
 
-run_col, _ = st.columns([1, 5])
-manual_run = run_col.button("▶  Run Backtest", type="primary", width="stretch")
+with st.form("scenario_form", clear_on_submit=False):
+    scenario_input = st.text_input(
+        "Or describe your own scenario:",
+        placeholder="e.g. 'What if I bought the top 3 performing stocks from the prior year?'",
+        key="scenario_text",
+    )
+    run_col, _ = st.columns([1, 5])
+    manual_run = run_col.form_submit_button("▶  Run Backtest", type="primary", use_container_width=True)
 
 # Consume auto_run flag — read then immediately clear so it only fires once
 auto_run = st.session_state.get("auto_run", False)
@@ -394,6 +432,9 @@ if run_clicked and scenario_input.strip():
 
     st.session_state["last_run_config"] = config
     st.session_state["last_run_result"] = result
+    st.session_state["search_history"] = _save_search_history(
+        scenario_input.strip(), st.session_state.get("search_history", [])
+    )
 
 elif run_clicked:
     st.warning("Please enter a scenario first.")

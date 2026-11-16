@@ -87,6 +87,29 @@ EXAMPLES:
 
 "buy top 5 losers with the highest market caps"
 {"rank":"market_cap_best","n":5,"filters":["return < 0"],"rebalance":"annual","lookback":"12m","hold":null,"buy_after_months":0,"ticker":null,"index":null}
+
+"buy the five biggest companies that fell last year"
+{"rank":"market_cap_best","n":5,"filters":["return < 0"],"rebalance":"annual","lookback":"12m","hold":null,"buy_after_months":0,"ticker":null,"index":null}
+
+"top 3 large cap stocks with negative returns, hold 6 months"
+{"rank":"return_worst","n":3,"filters":["market_cap > 10B","return < 0"],"rebalance":"annual","lookback":"12m","hold":6,"buy_after_months":0,"ticker":null,"index":null}
+
+"buy S&P 500 and hold"
+{"rank":"return_best","n":1,"filters":[],"rebalance":"annual","lookback":"12m","hold":null,"buy_after_months":0,"ticker":null,"index":"SPY"}
+
+"equal weight nasdaq 100"
+{"rank":"return_best","n":1,"filters":[],"rebalance":"annual","lookback":"12m","hold":null,"buy_after_months":0,"ticker":null,"index":"QQQ"}
+
+"buy top 10 Q1 winners hold for the rest of the year"
+{"rank":"return_best","n":10,"filters":[],"rebalance":"annual","lookback":"3m","hold":9,"buy_after_months":3,"ticker":null,"index":null}
+
+RULES:
+- "losers" or "worst performers" with "highest/biggest market cap" → rank="market_cap_best" + filter "return < 0"
+- "losers" or "worst performers" alone → rank="return_worst"
+- "market cap" alone (no loser/winner context) → rank="market_cap_best"
+- Always add "return < 0" filter when user says losers/fell/dropped/negative
+- Always add "return > 0" filter when user says winners/gained/rose/positive (unless rank=return_best)
+- "mega cap" → "market_cap > 200B"; "large cap" → "market_cap > 10B"
 """
 
 
@@ -269,6 +292,17 @@ def _extract_json(text: str) -> str:
 _openrouter_free_models_cache = []
 _model_empty_strikes = {}
 
+# Best-known reliable free models on OpenRouter — tried first before dynamic list.
+# DeepSeek R1 is excellent at structured JSON (think-blocks are already stripped).
+# Llama 3.3 70B is the most consistent for instruction-following.
+_PREFERRED_FREE_MODELS = [
+    "deepseek/deepseek-r1:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "microsoft/phi-4:free",
+    "qwen/qwq-32b:free",
+    "google/gemini-2.0-flash-thinking-exp:free",
+]
+
 
 def _parse_params_b(model_id: str) -> float:
     m = re.search(r'(\d+(?:\.\d+)?)\s*b(?:\b|_|-)', model_id.lower())
@@ -277,8 +311,11 @@ def _parse_params_b(model_id: str) -> float:
 
 def _get_free_models(key: str) -> list:
     global _openrouter_free_models_cache
+    # Preferred models always tried first; fill remainder from dynamic list.
+    base = list(_PREFERRED_FREE_MODELS)
     if _openrouter_free_models_cache:
-        return _openrouter_free_models_cache
+        extras = [m for m in _openrouter_free_models_cache if m not in base]
+        return base + extras[:5]
     import requests as _req
     try:
         r = _req.get(
@@ -299,10 +336,11 @@ def _get_free_models(key: str) -> list:
             capable = [m for m in free if _parse_params_b(m["id"]) >= 3 or _parse_params_b(m["id"]) == 0]
             ranked = sorted(capable, key=lambda m: _parse_params_b(m["id"]), reverse=True)
             _openrouter_free_models_cache = [m["id"] for m in ranked[:10]]
-            return _openrouter_free_models_cache
+            extras = [m for m in _openrouter_free_models_cache if m not in base]
+            return base + extras[:5]
     except Exception:
         pass
-    return []
+    return base
 
 
 def _call_openrouter(scenario: str, initial_capital: float, start_year: int) -> dict:

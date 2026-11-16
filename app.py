@@ -583,7 +583,9 @@ if run_clicked and scenario_input.strip():
             st.error(f"Could not interpret scenario: {e}")
             st.stop()
         if config.get("_interpreter") == "rule-based":
-            st.caption("🔤 Interpreted via keyword matching — verify the strategy explanation below.")
+            err = config.get("_interpreter_error", "")
+            detail = f" ({err})" if err else ""
+            st.caption(f"🔤 Interpreted via keyword matching{detail} — verify the strategy explanation below.")
 
     with st.spinner("Running backtest…"):
         config["tax_rate"] = tax_rate

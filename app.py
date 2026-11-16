@@ -339,15 +339,17 @@ with st.sidebar:
         elif _n_checked == 1:
             st.caption("Check one more to compare")
 
-        if len(_saved) > 1:
-            if st.button("🗑 Clear all", key="sidebar_clear_all"):
-                delete_all_backtests()
-                st.session_state["saved_backtests"] = []
-                st.session_state["_cmp_checked"] = []
-                st.session_state["_compare_indices"] = []
-                st.rerun()
-
         st.divider()
+
+    if len(st.session_state.get("saved_backtests", [])) > 1:
+        st.markdown("<div style='position:fixed;bottom:16px;left:0;width:var(--sidebar-width,21rem);padding:0 1rem;box-sizing:border-box;'>", unsafe_allow_html=True)
+        if st.button("🗑 Clear all", key="sidebar_clear_all", use_container_width=True):
+            delete_all_backtests()
+            st.session_state["saved_backtests"] = []
+            st.session_state["_cmp_checked"] = []
+            st.session_state["_compare_indices"] = []
+            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # Data loading

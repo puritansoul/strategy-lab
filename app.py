@@ -41,7 +41,9 @@ def _autocomplete_js(history: list) -> None:
     _components.html(f"""
 <script>
 (function() {{
-  var HISTORY = {history_json};
+  // Always update the shared history on the parent window so stale closures
+  // from a previous render pick up new entries without needing to re-attach.
+  parent._slHistory = {history_json};
 
   function init() {{
     var doc = parent.document;
@@ -49,26 +51,32 @@ def _autocomplete_js(history: list) -> None:
     if (!forms.length) return false;
     var form = forms[forms.length - 1];
     var input = form.querySelector('input[type="text"]');
-    if (!input || input._acReady) return false;
+    if (!input) return false;
+
+    // Already set up — history is updated via parent._slHistory, nothing else to do.
+    if (input._acReady) return true;
     input._acReady = true;
 
     var wrap = input.closest('[data-testid="stTextInput"]') || input.parentNode;
     wrap.style.position = 'relative';
 
     var dd = doc.createElement('div');
+    dd.id = 'sl-ac-dd';
     dd.style.cssText = 'position:absolute;left:0;right:0;top:100%;z-index:9999;'
       + 'background:#fff;border:1px solid #dadce0;border-top:none;'
-      + 'border-radius:0 0 24px 24px;box-shadow:0 4px 12px rgba(0,0,0,.12);'
+      + 'border-radius:0 0 24px 24px;box-shadow:0 4px 12px rgba(0,0,0,.15);'
       + 'display:none;overflow:hidden;';
     wrap.appendChild(dd);
 
     var active = -1;
 
+    function getHistory() {{ return parent._slHistory || []; }}
+
     function matches(q) {{
-      if (!HISTORY.length) return [];
+      var h = getHistory();
+      if (!h.length) return [];
       var lq = (q || '').toLowerCase().trim();
-      var arr = lq ? HISTORY.filter(function(h) {{ return h.toLowerCase().includes(lq); }}) : HISTORY;
-      return arr.slice(0, 8);
+      return (lq ? h.filter(function(s) {{ return s.toLowerCase().includes(lq); }}) : h).slice(0, 8);
     }}
 
     function render(q) {{
@@ -81,32 +89,31 @@ def _autocomplete_js(history: list) -> None:
         row.dataset.idx = i;
         row.style.cssText = 'padding:10px 20px;cursor:pointer;font-size:14px;'
           + 'display:flex;align-items:center;gap:12px;color:#202124;';
-        row.innerHTML = '<span style="opacity:.4;font-size:16px;">🕐</span>'
+        row.innerHTML = '<span style="opacity:.35;font-size:15px;">🕐</span>'
           + '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'
-          + item.replace(/</g,'&lt;') + '</span>';
+          + item.replace(/[<>&]/g, function(c){{return {{'<':'&lt;','>':'&gt;','&':'&amp;'}}[c];}})
+          + '</span>';
         row.addEventListener('mouseover', function() {{
-          dd.querySelectorAll('[data-idx]').forEach(function(r) {{ r.style.background=''; }});
-          row.style.background = '#f8f9fa';
+          dd.querySelectorAll('[data-idx]').forEach(function(r) {{ r.style.background = ''; }});
+          row.style.background = '#f0f4ff';
           active = i;
         }});
-        row.addEventListener('mousedown', function(e) {{
-          e.preventDefault();
-          fill(item);
-        }});
+        row.addEventListener('mousedown', function(e) {{ e.preventDefault(); fill(item); }});
         dd.appendChild(row);
       }});
       dd.style.display = 'block';
     }}
 
     function fill(val) {{
-      var setter = Object.getOwnPropertyDescriptor(parent.HTMLInputElement.prototype,'value').set;
+      var setter = Object.getOwnPropertyDescriptor(parent.HTMLInputElement.prototype, 'value').set;
       setter.call(input, val);
-      input.dispatchEvent(new parent.Event('input', {{bubbles:true}}));
+      input.dispatchEvent(new parent.Event('input', {{ bubbles: true }}));
       dd.style.display = 'none';
       setTimeout(function() {{
-        var btn = form.querySelector('[data-testid="stFormSubmitButton"] button, button[kind="primaryFormSubmit"]');
+        var submitWrap = form.querySelector('[data-testid="stFormSubmitButton"]');
+        var btn = submitWrap ? submitWrap.querySelector('button') : form.querySelector('button');
         if (btn) btn.click();
-      }}, 60);
+      }}, 80);
     }}
 
     input.addEventListener('focus', function() {{ render(input.value); }});
@@ -116,11 +123,11 @@ def _autocomplete_js(history: list) -> None:
       if (e.key === 'ArrowDown') {{
         e.preventDefault();
         active = Math.min(active + 1, rows.length - 1);
-        rows.forEach(function(r,i) {{ r.style.background = i===active ? '#f8f9fa' : ''; }});
+        rows.forEach(function(r, i) {{ r.style.background = i === active ? '#f0f4ff' : ''; }});
       }} else if (e.key === 'ArrowUp') {{
         e.preventDefault();
-        active = Math.max(active - 1, -1);
-        rows.forEach(function(r,i) {{ r.style.background = i===active ? '#f8f9fa' : ''; }});
+        active = Math.max(active - 1, 0);
+        rows.forEach(function(r, i) {{ r.style.background = i === active ? '#f0f4ff' : ''; }});
       }} else if (e.key === 'Enter' && active >= 0 && dd.style.display !== 'none') {{
         e.preventDefault();
         var row = rows[active];
@@ -130,7 +137,7 @@ def _autocomplete_js(history: list) -> None:
       }}
     }});
     input.addEventListener('blur', function() {{
-      setTimeout(function() {{ dd.style.display = 'none'; }}, 150);
+      setTimeout(function() {{ dd.style.display = 'none'; active = -1; }}, 180);
     }});
     return true;
   }}
@@ -141,7 +148,7 @@ def _autocomplete_js(history: list) -> None:
   }}, 150);
 }})();
 </script>
-""", height=0)
+""", height=1)
 
 # ---------------------------------------------------------------------------
 # Page config

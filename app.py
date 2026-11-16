@@ -418,7 +418,7 @@ if "last_run_result" not in st.session_state:
 if "search_history" not in st.session_state:
     st.session_state["search_history"] = load_search_history()
 
-with st.expander("Scenario Examples", expanded=True):
+with st.expander("Scenario Examples", expanded=False):
     cols = st.columns(4)
     for i, ex in enumerate(EXAMPLES):
         if cols[i % 4].button(ex, width="stretch", key=f"ex_{i}"):

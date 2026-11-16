@@ -223,16 +223,77 @@ st.caption("Describe any investment scenario in plain English — see 25 years o
 if "saved_backtests" not in st.session_state:
     st.session_state["saved_backtests"] = load_backtests()
 
+def _saved_tip_html(s: dict) -> str:
+    cfg = s.get("config", {})
+    _method_short = {
+        "top_n_prior_return":    "Top N prior return",
+        "bottom_n_prior_return": "Bottom N contrarian",
+        "top_n_momentum":        "Top N momentum",
+        "bottom_n_momentum":     "Bottom N momentum",
+        "top_n_market_cap":      "Top N by market cap",
+        "top_n_market_cap_growth": "Top N cap growth",
+        "hold_ticker":           "Hold ticker",
+        "equal_weight_sp500":    "SPY index",
+        "equal_weight_nasdaq":   "QQQ Nasdaq",
+    }
+    lines = []
+    if cfg:
+        method = cfg.get("selection_method", "")
+        n = cfg.get("n", 1)
+        label = _method_short.get(method, method)
+        tickers = cfg.get("tickers", [])
+        if method == "hold_ticker" and tickers:
+            lines.append(f"<b>Hold:</b> {', '.join(tickers)}")
+        elif method not in ("equal_weight_sp500", "equal_weight_nasdaq"):
+            lines.append(f"<b>Select:</b> {label}, n={n}")
+        else:
+            lines.append(f"<b>Strategy:</b> {label}")
+        sy = cfg.get("start_year", s.get("start_year", "?"))
+        ey = cfg.get("end_year", 2026)
+        cap = cfg.get("initial_capital", s.get("initial_capital", 10000))
+        lines.append(f"<b>Period:</b> {sy}–{ey} · <b>Capital:</b> ${cap:,.0f}")
+        freq = cfg.get("rebalance_frequency", "annual")
+        lb = cfg.get("selection_lookback_months", 12)
+        offset = cfg.get("buy_offset_months", 0)
+        hold = cfg.get("hold_months") or "natural"
+        timing = f"buy +{offset}mo" if offset else "buy Jan"
+        lines.append(f"<b>Rebalance:</b> {freq} · {timing} · hold {hold}")
+        lines.append(f"<b>Lookback:</b> {lb}mo")
+        tax = cfg.get("tax_rate", 0)
+        if tax:
+            lines.append(f"<b>Tax:</b> {int(tax*100)}%")
+        filters = cfg.get("filters", [])
+        for f in filters:
+            lines.append(f"<b>Filter:</b> {f.get('field')} {f.get('op')} {f.get('value')}")
+    else:
+        lines.append(s.get("name", ""))
+    return "<br>".join(lines)
+
+
 with st.sidebar:
 
     # Saved backtests — checkbox + metrics + delete in one card per item
     _saved = st.session_state.get("saved_backtests", [])
     if _saved:
         st.subheader(f"Saved Backtests ({len(_saved)})")
-        # Tighten vertical spacing between rows
         st.markdown("""<style>
         section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"]
             { margin-bottom: -1rem; }
+        /* Allow tooltip to overflow sidebar bounds */
+        section[data-testid="stSidebar"],
+        section[data-testid="stSidebar"] > div,
+        section[data-testid="stSidebar"] > div > div { overflow: visible !important; }
+        .sl-tip-wrap { position: relative; display: inline-block; width: 100%; }
+        .sl-tip-box {
+            visibility: hidden; opacity: 0;
+            position: absolute; left: calc(100% + 10px); top: 0;
+            width: 230px; background: #1e1f2e; color: #dde;
+            font-size: 11.5px; line-height: 1.7; padding: 9px 13px;
+            border-radius: 8px; box-shadow: 0 4px 18px rgba(0,0,0,.45);
+            z-index: 9999; pointer-events: none;
+            transition: opacity .15s ease;
+        }
+        .sl-tip-wrap:hover .sl-tip-box { visibility: visible; opacity: 1; }
         </style>""", unsafe_allow_html=True)
         _to_delete = None
         _checked_indices = []
@@ -240,16 +301,19 @@ with st.sidebar:
             _already = _i in st.session_state.get("_cmp_checked", [])
             _full_name = _s['name']
             _display_name = (_full_name[:24] + "…") if len(_full_name) > 24 else _full_name
-            _safe_name = _full_name.replace('"', '&quot;').replace("'", "&#39;")
             _chk_col, _name_col, _del_col = st.columns([1, 5.5, 1.5])
             if _chk_col.checkbox("", value=_already, key=f"cmp_chk_{_i}",
                                  label_visibility="collapsed"):
                 _checked_indices.append(_i)
+            _tip_html = _saved_tip_html(_s)
             _name_col.markdown(
-                f"<span title=\"{_safe_name}\" style='font-size:0.85em;font-weight:600;'>{_display_name}</span><br>"
+                f"<div class='sl-tip-wrap'>"
+                f"<span style='font-size:0.85em;font-weight:600;'>{_display_name}</span><br>"
                 f"<span style='font-size:0.75em;color:#888;'>"
                 f"${_s['final']:,.0f} · {_s['total_roi']*100:+.1f}% · "
-                f"{_s['years_beat']}/{_s['total_years']} yrs</span>",
+                f"{_s['years_beat']}/{_s['total_years']} yrs</span>"
+                f"<div class='sl-tip-box'>{_tip_html}</div>"
+                f"</div>",
                 unsafe_allow_html=True,
             )
             if _del_col.button("✕", key=f"sidebar_del_{_i}", help=f"Delete: {_display_name}"):
@@ -630,6 +694,7 @@ if _config is not None and _result is not None:
             "spy_rows":          spy_rows,
             "start_year":        start_year,
             "initial_capital":   init,
+            "config":            {k: v for k, v in config.items() if not k.startswith("_")},
         }
         _db_id = save_backtest(_new_entry)
         if _db_id:

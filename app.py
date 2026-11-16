@@ -800,8 +800,10 @@ if _config is not None and _result is not None:
             pre_tax_pct = r.get("pre_tax_return", r["portfolio_return"]) * 100
             tax_drag_pp = pre_tax_pct - ret_pct  # this year's drag only
             tax_paid = r["start_value"] * (tax_drag_pp / 100)
+            pre_tax_end_val = r["start_value"] * (1 + pre_tax_pct / 100)
             tax_cells = (
                 f"<td style='padding:6px 12px;color:#888;text-align:right;'>{pre_tax_pct:+.1f}%</td>"
+                f"<td style='padding:6px 12px;color:#bbb;text-align:right;font-style:italic;'>${pre_tax_end_val:,.0f}</td>"
                 f"<td style='padding:6px 12px;color:#c0392b;text-align:right;'>-{tax_drag_pp:.1f}%"
                 f" / ${tax_paid:,.0f}</td>"
             )
@@ -839,6 +841,7 @@ if _config is not None and _result is not None:
 
     _tax_headers = (
         "<th style='text-align:right;color:#888;'>Pre-Tax Gain</th>"
+        "<th style='text-align:right;color:#bbb;'>Pre-Tax $</th>"
         "<th style='text-align:right;color:#c0392b;'>Tax drag</th>"
         if _show_tax_cols else ""
     )

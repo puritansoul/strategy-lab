@@ -84,6 +84,9 @@ EXAMPLES:
 
 "top 10 momentum, large cap, quarterly"
 {"rank":"momentum_best","n":10,"filters":["market_cap > 10B"],"rebalance":"quarterly","lookback":"6m","hold":null,"buy_after_months":0,"ticker":null,"index":null}
+
+"buy top 5 losers with the highest market caps"
+{"rank":"market_cap_best","n":5,"filters":["return < 0"],"rebalance":"annual","lookback":"12m","hold":null,"buy_after_months":0,"ticker":null,"index":null}
 """
 
 
@@ -486,18 +489,21 @@ def _rule_based(scenario: str, initial_capital: float, start_year: int) -> dict:
     simple["n"] = n or 1
 
     # ---- rank direction — check most specific first ----
-    if re.search(r'\b(worst|bottom|loser|losers|contrarian|fell|dropped|declined|underperform|dogs?)\b', text):
+    _has_loser = bool(re.search(r'\b(worst|bottom|loser|losers|contrarian|fell|dropped|declined|underperform|dogs?)\b', text))
+    _has_cap_rank = bool(re.search(r'\b(market.?caps?|largest|biggest|most valuable|highest.{0,20}cap|cap.{0,20}highest)\b', text))
+
+    if _has_loser and _has_cap_rank:
+        # "losers with highest market cap" → rank by cap, filter to losers
+        simple["rank"] = "market_cap_best"
+    elif _has_loser:
         simple["rank"] = "return_worst"
     elif re.search(r'market.?cap.*(grew|grow|increas|gain|rose|biggest).*(year|prior|last)|'
                    r'(grew|grow|increas|gain|rose).*(market.?cap)', text):
         simple["rank"] = "market_cap_growth_best"
     elif re.search(r'\b(momentum|trending|hot|breakout|relative strength)\b', text):
-        # momentum beats large-cap as the rank signal; large-cap becomes a filter below
         simple["rank"] = "momentum_best"
         simple["lookback"] = "6m"
-    elif re.search(r'\b(market.?caps?|largest|biggest|most valuable)\b', text) \
-            and not re.search(r'\b(best|top|winner|perform|return)\b', text):
-        # only use market_cap as rank when there's no return/performance signal
+    elif _has_cap_rank and not re.search(r'\b(best|top|winner|perform|return)\b', text):
         simple["rank"] = "market_cap_best"
     else:
         simple["rank"] = "return_best"
@@ -555,6 +561,10 @@ def _rule_based(scenario: str, initial_capital: float, start_year: int) -> dict:
             filters_raw.append("return < 0")
         elif re.search(r'\b(winner|winners|gained|rose|positive)\b', text):
             filters_raw.append("return > 0")
+
+    # when losers+market_cap combo triggered market_cap_best rank, add loser filter
+    if _has_loser and simple["rank"] == "market_cap_best" and "return < 0" not in filters_raw:
+        filters_raw.append("return < 0")
 
     simple["filters"] = filters_raw
 

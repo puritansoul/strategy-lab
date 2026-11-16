@@ -21,7 +21,7 @@ from typing import Optional
 # Compact LLM schema — what we ask the LLM to produce
 # ---------------------------------------------------------------------------
 
-SYSTEM_PROMPT = """You translate investment scenarios into a compact JSON config.
+SYSTEM_PROMPT = """You translate investment scenarios into a compact JSON config for an S&P 500 backtester.
 
 OUTPUT EXACTLY this JSON structure, no other text:
 {
@@ -36,40 +36,51 @@ OUTPUT EXACTLY this JSON structure, no other text:
   "index": null or "SPY" or "QQQ"
 }
 
-rank options (pick one):
-  "return_best"          — buy top performers (winners/momentum)
-  "return_worst"         — buy worst performers (contrarian/losers)
-  "momentum_best"        — buy top momentum stocks
-  "market_cap_best"      — buy largest companies
-  "market_cap_growth_best" — buy companies whose market cap grew most
+━━━ RANK OPTIONS (pick exactly one) ━━━
+  "return_best"            top performers / winners / best returns / highest gains
+  "return_worst"           worst performers / losers / most beaten-down / contrarian
+  "momentum_best"          trending / hot / breakout / relative strength / high RSI
+  "market_cap_best"        largest / biggest / most valuable / blue chip / heavyweights
+  "market_cap_growth_best" companies whose market cap grew most (not return — cap SIZE growth)
 
-filters — list of strings, each: "field op value"
+━━━ FILTERS ━━━
   field: market_cap | price | return
   op:    > < >= <=
-  value: number with optional suffix B/T/M (e.g. 100B, 2.5T, 500M, 50)
-  e.g. "market_cap > 100B", "price > 50", "return < 0"
-  Use [] if no filter.
+  value: number + optional B/T/M suffix  (100B = $100 billion, 2.5T = $2.5 trillion)
+  Examples: "market_cap > 100B"  "price > 50"  "return < 0"  "return > 0"
+  Use [] when no filter.
 
-cap tier shortcuts (ALWAYS apply these as filters when mentioned):
-  mega-cap  → market_cap > 200B
-  large-cap → market_cap > 10B
-  mid-cap   → market_cap > 2B AND market_cap < 10B
-  small-cap → market_cap < 2B
-  micro-cap → market_cap < 300M
+  Cap tier shortcuts — always convert these when mentioned:
+    mega-cap    → "market_cap > 200B"
+    large-cap   → "market_cap > 10B"
+    mid-cap     → "market_cap > 2B"  AND  "market_cap < 10B"
+    small-cap   → "market_cap < 2B"
+    micro-cap   → "market_cap < 300M"
+    blue chip   → "market_cap > 50B"
+    penny stock → "price < 5"
 
-n: how many stocks (integer). Use "all" only when user says all/every/each.
+━━━ TIMING ━━━
+  rebalance: how often to rotate — "annual" (default) | "quarterly" | "monthly"
+  lookback:  how far back to measure performance — default "12m"
+             Q1 strategy → "3m"; monthly → "1m"; semi-annual → "6m"
+  hold:      months to hold before selling — null means hold until next rebalance
+  buy_after_months: delay from Jan 1
+    0 = buy in January (default)
+    1 = buy in February
+    3 = buy in April  ← use this for "after Q1 / April / wait for earnings"
+    6 = buy in July   ← use this for "after Q2 / mid-year"
 
-lookback: how far back to measure performance. Default "12m".
-  "3m" = 3 months, "6m" = 6 months, "12m" = 1 year.
+  Semi-annual strategies: use rebalance="annual", hold=6, buy_after_months=0
 
-hold: months to hold before selling. null = full period (default).
+━━━ SPECIAL ━━━
+  ticker: list of tickers for "hold X" or "just buy X" strategies
+  index="SPY": equal-weight S&P 500 (use for: "buy the index", "just hold SPY", "passive")
+  index="QQQ": equal-weight Nasdaq 100 (use for: "QQQ", "tech index", "Nasdaq 100")
+  n: integer. Use "all" only for explicit "all/every/each stocks" phrasing.
+     Default n=10 when user says "top stocks" without a number.
 
-buy_after_months: months after Jan 1 to buy. 0=January, 3=April (after Q1), 1=February.
+━━━ EXAMPLES ━━━
 
-ticker: only for "hold specific stock" strategies.
-index: "SPY" for S&P 500 index, "QQQ" for Nasdaq 100.
-
-EXAMPLES:
 "buy 5 best performers each year"
 {"rank":"return_best","n":5,"filters":[],"rebalance":"annual","lookback":"12m","hold":null,"buy_after_months":0,"ticker":null,"index":null}
 
@@ -82,6 +93,12 @@ EXAMPLES:
 "hold NVDA"
 {"rank":"return_best","n":1,"filters":[],"rebalance":"annual","lookback":"12m","hold":null,"buy_after_months":0,"ticker":["NVDA"],"index":null}
 
+"magnificent seven"
+{"rank":"return_best","n":7,"filters":[],"rebalance":"annual","lookback":"12m","hold":null,"buy_after_months":0,"ticker":["AAPL","MSFT","NVDA","AMZN","META","GOOGL","TSLA"],"index":null}
+
+"FAANG stocks"
+{"rank":"return_best","n":5,"filters":[],"rebalance":"annual","lookback":"12m","hold":null,"buy_after_months":0,"ticker":["META","AAPL","AMZN","NFLX","GOOGL"],"index":null}
+
 "top 10 momentum, large cap, quarterly"
 {"rank":"momentum_best","n":10,"filters":["market_cap > 10B"],"rebalance":"quarterly","lookback":"6m","hold":null,"buy_after_months":0,"ticker":null,"index":null}
 
@@ -90,6 +107,12 @@ EXAMPLES:
 
 "buy the five biggest companies that fell last year"
 {"rank":"market_cap_best","n":5,"filters":["return < 0"],"rebalance":"annual","lookback":"12m","hold":null,"buy_after_months":0,"ticker":null,"index":null}
+
+"dogs of the dow — worst 10 large cap performers"
+{"rank":"return_worst","n":10,"filters":["market_cap > 50B","return < 0"],"rebalance":"annual","lookback":"12m","hold":null,"buy_after_months":0,"ticker":null,"index":null}
+
+"buy the dip — 20 most beaten down S&P stocks"
+{"rank":"return_worst","n":20,"filters":[],"rebalance":"annual","lookback":"12m","hold":null,"buy_after_months":0,"ticker":null,"index":null}
 
 "top 3 large cap stocks with negative returns, hold 6 months"
 {"rank":"return_worst","n":3,"filters":["market_cap > 10B","return < 0"],"rebalance":"annual","lookback":"12m","hold":6,"buy_after_months":0,"ticker":null,"index":null}
@@ -103,13 +126,71 @@ EXAMPLES:
 "buy top 10 Q1 winners hold for the rest of the year"
 {"rank":"return_best","n":10,"filters":[],"rebalance":"annual","lookback":"3m","hold":9,"buy_after_months":3,"ticker":null,"index":null}
 
-RULES:
-- "losers" or "worst performers" with "highest/biggest market cap" → rank="market_cap_best" + filter "return < 0"
-- "losers" or "worst performers" alone → rank="return_worst"
-- "market cap" alone (no loser/winner context) → rank="market_cap_best"
-- Always add "return < 0" filter when user says losers/fell/dropped/negative
-- Always add "return > 0" filter when user says winners/gained/rose/positive (unless rank=return_best)
-- "mega cap" → "market_cap > 200B"; "large cap" → "market_cap > 10B"
+"rotate into top 5 momentum stocks every 3 months"
+{"rank":"momentum_best","n":5,"filters":[],"rebalance":"quarterly","lookback":"3m","hold":null,"buy_after_months":0,"ticker":null,"index":null}
+
+"small cap winners each month"
+{"rank":"return_best","n":10,"filters":["market_cap < 2B"],"rebalance":"monthly","lookback":"1m","hold":null,"buy_after_months":0,"ticker":null,"index":null}
+
+"companies that grew market cap the most last year, top 10"
+{"rank":"market_cap_growth_best","n":10,"filters":[],"rebalance":"annual","lookback":"12m","hold":null,"buy_after_months":0,"ticker":null,"index":null}
+
+"buy apple microsoft google amazon"
+{"rank":"return_best","n":4,"filters":[],"rebalance":"annual","lookback":"12m","hold":null,"buy_after_months":0,"ticker":["AAPL","MSFT","GOOGL","AMZN"],"index":null}
+
+"buy mid cap stocks with the best 6-month momentum, rotate quarterly"
+{"rank":"momentum_best","n":10,"filters":["market_cap > 2B","market_cap < 10B"],"rebalance":"quarterly","lookback":"6m","hold":null,"buy_after_months":0,"ticker":null,"index":null}
+
+"top 5 mega cap winners, buy after Q1 earnings"
+{"rank":"return_best","n":5,"filters":["market_cap > 200B"],"rebalance":"annual","lookback":"3m","hold":null,"buy_after_months":3,"ticker":null,"index":null}
+
+"worst 10 small cap stocks from last year, hold 6 months"
+{"rank":"return_worst","n":10,"filters":["market_cap < 2B","return < 0"],"rebalance":"annual","lookback":"12m","hold":6,"buy_after_months":0,"ticker":null,"index":null}
+
+"just hold SPY as benchmark"
+{"rank":"return_best","n":1,"filters":[],"rebalance":"annual","lookback":"12m","hold":null,"buy_after_months":0,"ticker":null,"index":"SPY"}
+
+"buy the 10 hottest stocks every month"
+{"rank":"momentum_best","n":10,"filters":[],"rebalance":"monthly","lookback":"1m","hold":null,"buy_after_months":0,"ticker":null,"index":null}
+
+"top 20 by market cap, annual rebalance"
+{"rank":"market_cap_best","n":20,"filters":[],"rebalance":"annual","lookback":"12m","hold":null,"buy_after_months":0,"ticker":null,"index":null}
+
+"buy 5 stocks with price under $20 that had best returns"
+{"rank":"return_best","n":5,"filters":["price < 20"],"rebalance":"annual","lookback":"12m","hold":null,"buy_after_months":0,"ticker":null,"index":null}
+
+━━━ DECISION RULES ━━━
+1. "losers/fell/dropped/down/negative/beaten-down/contrarian/buy the dip" + "largest/biggest/highest market cap"
+   → rank="market_cap_best"  +  filter "return < 0"
+
+2. "losers/worst/fell/dropped/contrarian/beaten-down/buy the dip" (no market cap ranking)
+   → rank="return_worst"
+
+3. "market cap" or "largest/biggest/most valuable/blue chip" (no loser/winner modifier)
+   → rank="market_cap_best"
+
+4. "momentum/trending/hot/breakout/relative strength/high RSI/52-week high"
+   → rank="momentum_best"  with lookback="6m" unless specified
+
+5. "market cap grew/grew most/fastest growing" (cap SIZE increase, not stock return)
+   → rank="market_cap_growth_best"
+
+6. Always add "return < 0" when: losers/fell/dropped/down/negative/beaten-down/contrarian
+7. Always add "return > 0" when: winners/gained/rose/positive/best  (only if rank is NOT return_best)
+
+8. Timing shortcuts:
+   "after Q1 / April / wait for Q1 earnings" → buy_after_months=3, lookback="3m"
+   "after Q2 / mid-year / July"              → buy_after_months=6, lookback="6m"
+   "semi-annual / every 6 months / twice a year" → rebalance="annual", hold=6
+   "quarterly / every 3 months"              → rebalance="quarterly", lookback="3m"
+   "monthly / every month"                   → rebalance="monthly",   lookback="1m"
+
+9. Named portfolios:
+   "FAANG"            → ticker=["META","AAPL","AMZN","NFLX","GOOGL"]
+   "magnificent seven / mag 7" → ticker=["AAPL","MSFT","NVDA","AMZN","META","GOOGL","TSLA"]
+   "dogs of the dow"  → rank="return_worst", n=10, filters=["market_cap > 50B","return < 0"]
+
+10. When n is not specified and query is about "top stocks" → default n=10
 """
 
 
@@ -373,7 +454,7 @@ def _call_openrouter(scenario: str, initial_capital: float, start_year: int) -> 
                         {"role": "user", "content": user_msg},
                     ],
                     "temperature": 0,
-                    "max_tokens": 250,
+                    "max_tokens": 400,
                 },
                 timeout=25,
             )
@@ -435,7 +516,7 @@ def _call_anthropic(scenario: str, initial_capital: float, start_year: int) -> d
     user_msg = f"Scenario: {scenario}\nInitial capital: ${initial_capital:,.0f}\nStart year: {start_year}"
     msg = client.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=250,
+        max_tokens=400,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_msg}],
     )
@@ -456,27 +537,41 @@ _COMPANY_TO_TICKER = {
     "exxon":"XOM","walmart":"WMT","visa":"V","mastercard":"MA",
     "johnson":"JNJ","pfizer":"PFE","disney":"DIS","nike":"NKE",
     "salesforce":"CRM","uber":"UBER","airbnb":"ABNB","palantir":"PLTR",
+    "broadcom":"AVGO","eli lilly":"LLY","lilly":"LLY","unitedhealth":"UNH",
+    "chevron":"CVX","home depot":"HD","costco":"COST","oracle":"ORCL",
+    "abbvie":"ABBV","cocacola":"KO","coca cola":"KO","coke":"KO",
+    "pepsi":"PEP","pepsico":"PEP","merck":"MRK","bank of america":"BAC",
+    "goldman":"GS","morgan stanley":"MS","citigroup":"C","wells fargo":"WFC",
+}
+
+# Named portfolio shortcuts
+_NAMED_PORTFOLIOS = {
+    r'\b(magnificent.?seven|mag.?7)\b': ["AAPL","MSFT","NVDA","AMZN","META","GOOGL","TSLA"],
+    r'\bfaang\b':                        ["META","AAPL","AMZN","NFLX","GOOGL"],
+    r'\bfang\b':                         ["META","AMZN","NFLX","GOOGL"],
 }
 
 _SKIP_WORDS = {
     "I","A","AN","THE","AND","OR","IF","IN","ON","AT","TO","OF","MY",
     "BUY","SELL","GET","PUT","ALL","TOP","BOT","SP","ETF","YTD","QQ",
     "SPY","QQQ","USD","US","FOR","WITH","FROM","WHAT","HOW","IT","DO",
+    "HOLD","BEST","LAST","YEAR","HIGH","LOW","NEXT","EACH","EVERY",
 }
 
 _WORD_NUMS = {
     "one":1,"two":2,"three":3,"four":4,"five":5,"six":6,"seven":7,
-    "eight":8,"nine":9,"ten":10,"fifteen":15,"twenty":20,"fifty":50,
+    "eight":8,"nine":9,"ten":10,"twelve":12,"fifteen":15,"twenty":20,
+    "twenty five":25,"fifty":50,"hundred":100,
 }
 
 
 def _rule_based(scenario: str, initial_capital: float, start_year: int) -> dict:
-    """Minimal rule-based fallback — handles obvious patterns, defers rest to defaults."""
+    """Rule-based fallback — handles common patterns when LLM is unavailable."""
     text = scenario.lower().strip()
 
     simple = {
         "rank": "return_best",
-        "n": 1,
+        "n": 10,  # default 10, not 1
         "filters": [],
         "rebalance": "annual",
         "lookback": "12m",
@@ -486,14 +581,24 @@ def _rule_based(scenario: str, initial_capital: float, start_year: int) -> dict:
         "index": None,
     }
 
-    # ---- index / specific ticker ----
-    if "SPY" in scenario or re.search(r'\b(s&p.?500.?index|just.*spy|index fund)\b', text):
+    # ---- named portfolios (check before generic ticker scan) ----
+    for pattern, tickers in _NAMED_PORTFOLIOS.items():
+        if re.search(pattern, text):
+            simple["ticker"] = tickers
+            simple["n"] = len(tickers)
+            return _compile(simple, initial_capital, start_year)
+
+    # ---- index ----
+    if "SPY" in scenario or re.search(
+        r'\b(s&p.?500|sp500|s&p500|spy|index fund|passive|benchmark)\b', text
+    ):
         simple["index"] = "SPY"
         return _compile(simple, initial_capital, start_year)
-    if "QQQ" in scenario or re.search(r'\b(nasdaq.?100|qqq)\b', text):
+    if "QQQ" in scenario or re.search(r'\b(nasdaq.?100|qqq|tech.?index)\b', text):
         simple["index"] = "QQQ"
         return _compile(simple, initial_capital, start_year)
 
+    # ---- named company → ticker ----
     tickers_found = []
     for name, ticker in _COMPANY_TO_TICKER.items():
         if name in text and ticker not in tickers_found:
@@ -502,7 +607,7 @@ def _rule_based(scenario: str, initial_capital: float, start_year: int) -> dict:
         if t not in _SKIP_WORDS and t not in tickers_found:
             tickers_found.append(t)
 
-    if re.search(r'\b(hold|held|just buy|just hold|invest in)\b', text) and tickers_found:
+    if re.search(r'\b(hold|held|just buy|just hold|invest in|only buy)\b', text) and tickers_found:
         simple["ticker"] = tickers_found
         simple["n"] = len(tickers_found)
         return _compile(simple, initial_capital, start_year)
@@ -510,8 +615,9 @@ def _rule_based(scenario: str, initial_capital: float, start_year: int) -> dict:
     # ---- n ----
     n = None
     for pat in [
-        r'\b(?:top|best|worst|bottom)\s+(\d+)\b',
-        r'\b(\d+)\s+(?:top|best|worst|bottom|largest|stocks?|companies|performers?)\b',
+        r'\b(?:top|best|worst|bottom|largest|biggest)\s+(\d+)\b',
+        r'\b(\d+)\s+(?:top|best|worst|bottom|largest|stocks?|companies|performers?|winners?|losers?)\b',
+        r'\bbuy\s+(\d+)\b',
     ]:
         m = re.search(pat, text)
         if m:
@@ -519,44 +625,72 @@ def _rule_based(scenario: str, initial_capital: float, start_year: int) -> dict:
             break
     if n is None:
         for word, val in _WORD_NUMS.items():
-            if re.search(rf'\b(?:top|best|worst|bottom|largest)\s+{word}\b', text):
+            if re.search(rf'\b(?:top|best|worst|bottom|largest|buy|pick)\s+{word}\b', text):
                 n = val
                 break
+    # "all/every/each stocks" → n=999, but NOT "every month/quarter" (time words)
     if n is None and re.search(r'\b(all|every|each)\b', text) and not re.search(r'\b\d+\b', text):
-        n = 999
-    simple["n"] = n or 1
+        if not re.search(r'\b(month|quarter|year|week|day)\b', text):
+            n = 999
+    if n is not None:
+        simple["n"] = n
 
-    # ---- rank direction — check most specific first ----
-    _has_loser = bool(re.search(r'\b(worst|bottom|loser|losers|contrarian|fell|dropped|declined|underperform|dogs?)\b', text))
-    _has_cap_rank = bool(re.search(r'\b(market.?caps?|largest|biggest|most valuable|highest.{0,20}cap|cap.{0,20}highest)\b', text))
+    # ---- rank direction — most specific patterns first ----
+    _has_loser = bool(re.search(
+        r'\b(worst|bottom|loser|losers|contrarian|fell|dropped|declined|underperform|'
+        r'dogs?|beaten.?down|buy.?the.?dip|dip|reversal|negative|laggard)\b', text
+    ))
+    _has_winner = bool(re.search(
+        r'\b(winner|winners|best|top|gained|rose|positive|outperform)\b', text
+    ))
+    _has_cap_rank = bool(re.search(
+        r'\b(market.?caps?|largest|biggest|most valuable|highest.{0,20}cap|'
+        r'cap.{0,20}highest|blue.?chip|heavyweight|mega)\b', text
+    ))
+    _has_cap_growth = bool(re.search(
+        r'\b(market.?cap.*(grew|grow|increas|gain|rose)|'
+        r'(grew|grow|increas|gain|rose).*market.?cap|'
+        r'fastest.?grow|cap.?growth)\b', text
+    ))
+    _has_momentum = bool(re.search(
+        r'\b(momentum|trending|hot|breakout|relative strength|52.?week.?high|rsi|high.?flier)\b', text
+    ))
 
     if _has_loser and _has_cap_rank:
-        # "losers with highest market cap" → rank by cap, filter to losers
         simple["rank"] = "market_cap_best"
-    elif _has_loser:
-        simple["rank"] = "return_worst"
-    elif re.search(r'market.?cap.*(grew|grow|increas|gain|rose|biggest).*(year|prior|last)|'
-                   r'(grew|grow|increas|gain|rose).*(market.?cap)', text):
+    elif _has_cap_growth:
         simple["rank"] = "market_cap_growth_best"
-    elif re.search(r'\b(momentum|trending|hot|breakout|relative strength)\b', text):
+    elif _has_momentum:
         simple["rank"] = "momentum_best"
         simple["lookback"] = "6m"
-    elif _has_cap_rank and not re.search(r'\b(best|top|winner|perform|return)\b', text):
+    elif _has_loser:
+        simple["rank"] = "return_worst"
+    elif _has_cap_rank:
         simple["rank"] = "market_cap_best"
     else:
         simple["rank"] = "return_best"
 
     # ---- rebalance frequency ----
-    if re.search(r'\b(every month|monthly|each month)\b', text):
+    if re.search(r'\b(every month|monthly|each month|month.?to.?month)\b', text):
         simple["rebalance"] = "monthly"
         simple["lookback"] = "1m"
-    elif re.search(r'\b(every quarter|quarterly|each quarter)\b', text):
+    elif re.search(r'\b(semi.?annual|every 6 months|twice a year|bi.?annual|biannual)\b', text):
+        simple["hold"] = 6
+    elif re.search(r'\b(every quarter|quarterly|each quarter|every 3 months|rotate.*quarter)\b', text):
         if not re.search(r'\b(every year|annually|each year)\b', text):
             simple["rebalance"] = "quarterly"
             simple["lookback"] = "3m"
 
-    # ---- Q1/Q2 buy offset ----
-    if re.search(r'\b(first quarter|q1)\b', text) and re.search(r'\b(hold|3 quarter|three quarter)\b', text):
+    # ---- buy timing (Q1/Q2/month offset) ----
+    if re.search(r'\b(after.?q1|after.?first.?quarter|april|wait.*q1.*earn)\b', text):
+        simple["buy_after_months"] = 3
+        if simple["lookback"] == "12m":
+            simple["lookback"] = "3m"
+    elif re.search(r'\b(after.?q2|after.?second.?quarter|july|mid.?year)\b', text):
+        simple["buy_after_months"] = 6
+        if simple["lookback"] == "12m":
+            simple["lookback"] = "6m"
+    elif re.search(r'\b(first quarter|q1)\b', text) and re.search(r'\b(hold|3 quarter|three quarter|rest.?of.?year)\b', text):
         simple["buy_after_months"] = 3
         simple["lookback"] = "3m"
         simple["hold"] = 9
@@ -565,21 +699,30 @@ def _rule_based(scenario: str, initial_capital: float, start_year: int) -> dict:
         simple["lookback"] = "1m"
 
     # ---- hold duration ----
-    hm = re.search(r'\bhold(?:ing)?\s+(?:for\s+)?(\d+)\s*(month|quarter)', text)
+    hm = re.search(r'\bhold(?:ing)?\s+(?:for\s+)?(\d+)\s*(month|quarter|year)', text)
     if hm:
         num, unit = int(hm.group(1)), hm.group(2)
-        simple["hold"] = num * 3 if unit.startswith("quarter") else num
+        if unit.startswith("year"):
+            simple["hold"] = num * 12
+        elif unit.startswith("quarter"):
+            simple["hold"] = num * 3
+        else:
+            simple["hold"] = num
+    # "hold for the rest of the year" / "hold all year"
+    elif re.search(r'\bhold.*(rest.?of.?year|all year|12 months?|a year|one year)\b', text):
+        simple["hold"] = 12
 
     # ---- filters ----
     filters_raw = []
     mcap_m = re.search(
-        r'market.?cap\s*(?:above|over|>|greater than|more than|of at least)?\s*\$?\s*(\d+(?:\.\d+)?)\s*(b(?:illion)?|t(?:rillion)?|m(?:illion)?)\b',
+        r'market.?cap\s*(?:above|over|>|greater than|more than|of at least|exceeding)?\s*'
+        r'\$?\s*(\d+(?:\.\d+)?)\s*(b(?:illion)?|t(?:rillion)?|m(?:illion)?)\b',
         text
     )
     if mcap_m:
         filters_raw.append(f"market_cap > {mcap_m.group(1)}{mcap_m.group(2)[0].upper()}")
     elif re.search(r'\bmega.?cap\b', text):
-        filters_raw.append("market_cap > 100B")
+        filters_raw.append("market_cap > 200B")
     elif re.search(r'\blarge.?cap\b', text):
         filters_raw.append("market_cap > 10B")
     elif re.search(r'\bmid.?cap\b', text):
@@ -587,20 +730,32 @@ def _rule_based(scenario: str, initial_capital: float, start_year: int) -> dict:
         filters_raw.append("market_cap < 10B")
     elif re.search(r'\bsmall.?cap\b', text):
         filters_raw.append("market_cap < 2B")
+    elif re.search(r'\bmicro.?cap\b', text):
+        filters_raw.append("market_cap < 300M")
+    elif re.search(r'\bblue.?chip\b', text):
+        filters_raw.append("market_cap > 50B")
+
+    # dogs of the dow — large cap losers
+    if re.search(r'\bdogs?.*(dow|market)\b', text):
+        if "market_cap > 50B" not in filters_raw:
+            filters_raw.append("market_cap > 50B")
 
     price_m = re.search(r'(?:stock\s+)?price\s*(above|over|>|below|under|<)\s*\$?\s*(\d+(?:\.\d+)?)', text)
     if price_m:
         op = ">" if price_m.group(1) in ("above", "over", ">") else "<"
         filters_raw.append(f"price {op} {price_m.group(2)}")
 
-    # implicit return filter when "all losers/winners"
-    if simple["n"] >= 999:
-        if re.search(r'\b(loser|losers|lost|fell|dropped|declined|negative)\b', text):
-            filters_raw.append("return < 0")
-        elif re.search(r'\b(winner|winners|gained|rose|positive)\b', text):
-            filters_raw.append("return > 0")
+    # penny stocks
+    if re.search(r'\bpenny.?stocks?\b', text):
+        filters_raw.append("price < 5")
 
-    # when losers+market_cap combo triggered market_cap_best rank, add loser filter
+    # return filter — always add when loser/winner language is explicit
+    if _has_loser and "return < 0" not in filters_raw:
+        # for "all losers" or when explicitly asking for negative-return stocks
+        if simple["n"] >= 999 or re.search(
+            r'\b(all|every|any|negative|fell|dropped|declined)\b', text
+        ):
+            filters_raw.append("return < 0")
     if _has_loser and simple["rank"] == "market_cap_best" and "return < 0" not in filters_raw:
         filters_raw.append("return < 0")
 
@@ -611,7 +766,7 @@ def _rule_based(scenario: str, initial_capital: float, start_year: int) -> dict:
     if m:
         yr = int(m.group(1))
         if 2001 <= yr <= 2025:
-            simple["start_year"] = yr  # will be overridden by compile's start_year param anyway
+            simple["start_year"] = yr
 
     return _compile(simple, initial_capital, start_year)
 

@@ -190,6 +190,7 @@ with st.expander("⚙️ Settings", expanded=False):
         _tax_options = {"0% (pre-tax)": 0.0, "15%": 0.15, "20%": 0.20, "25%": 0.25, "30%": 0.30, "37%": 0.37}
         _tax_label = st.selectbox(
             "Tax rate", options=list(_tax_options.keys()),
+            index=list(_tax_options.keys()).index("30%"),
             label_visibility="collapsed",
         )
         tax_rate = _tax_options[_tax_label]

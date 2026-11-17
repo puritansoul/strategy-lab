@@ -582,10 +582,19 @@ if run_clicked and scenario_input.strip():
         except Exception as e:
             st.error(f"Could not interpret scenario: {e}")
             st.stop()
-        if config.get("_interpreter") == "rule-based":
-            err = config.get("_interpreter_error", "")
-            detail = f" ({err})" if err else ""
-            st.caption(f"🔤 Interpreted via keyword matching{detail} — verify the strategy explanation below.")
+        _interp = config.get("_interpreter", "rule-based")
+        _interp_err = config.get("_interpreter_error", "")
+        if _interp == "gemini":
+            st.success("✅ Gemini AI interpreted this query", icon=None)
+        elif _interp == "openrouter":
+            st.info("🤖 OpenRouter interpreted this query")
+        elif _interp in ("groq", "anthropic"):
+            st.info(f"🤖 {_interp.capitalize()} interpreted this query")
+        else:
+            if _interp_err:
+                st.warning(f"🔤 Keyword fallback — AI failed: {_interp_err}")
+            else:
+                st.caption("🔤 Interpreted via keyword matching — verify the strategy explanation below.")
 
     with st.spinner("Running backtest…"):
         config["tax_rate"] = tax_rate

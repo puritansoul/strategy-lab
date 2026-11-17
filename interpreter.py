@@ -810,34 +810,36 @@ def interpret(scenario: str, initial_capital: float = 10_000, start_year: int = 
     if os.environ.get("GEMINI_API_KEY"):
         try:
             config = _call_gemini(scenario, initial_capital, start_year)
+            config["_interpreter"] = "gemini"
         except Exception as e:
             error_msg = f"Gemini: {e}"
 
     if config is None and os.environ.get("OPENROUTER_API_KEY"):
         try:
             config = _call_openrouter(scenario, initial_capital, start_year)
+            config["_interpreter"] = "openrouter"
         except Exception as e:
-            error_msg = f"OpenRouter: {e}"
+            error_msg = (error_msg or "") + f" | OpenRouter: {e}"
 
     if config is None and os.environ.get("GROQ_API_KEY"):
         try:
             config = _call_groq(scenario, initial_capital, start_year)
+            config["_interpreter"] = "groq"
         except Exception as e:
-            error_msg = f"Groq: {e}"
+            error_msg = (error_msg or "") + f" | Groq: {e}"
 
     if config is None and os.environ.get("ANTHROPIC_API_KEY"):
         try:
             config = _call_anthropic(scenario, initial_capital, start_year)
+            config["_interpreter"] = "anthropic"
         except Exception as e:
-            error_msg = f"Anthropic: {e}"
+            error_msg = (error_msg or "") + f" | Anthropic: {e}"
 
     if config is None:
         config = _rule_based(scenario, initial_capital, start_year)
         config["_interpreter"] = "rule-based"
         if error_msg:
-            config["_interpreter_error"] = error_msg
-    else:
-        config["_interpreter"] = "llm"
+            config["_interpreter_error"] = error_msg.lstrip(" | ")
 
     # Enforce required fields
     config.setdefault("selection_method", "top_n_prior_return")

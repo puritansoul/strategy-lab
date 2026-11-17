@@ -917,23 +917,26 @@ if _config is not None and _result is not None:
                     "total": sum(len(rr) for rr in _runs),
                     "runs": _runs,
                 })
-        _repeat_data.sort(key=lambda x: x["total"], reverse=True)
+        # Flatten to one entry per run, sorted longest streak first
+        _run_rows = sorted(
+            [{"ticker": _d["ticker"], "run": rr} for _d in _repeat_data for rr in _d["runs"]],
+            key=lambda x: len(x["run"]), reverse=True,
+        )
 
-        if _repeat_data:
+        if _run_rows:
+            _n_tickers = len({x["ticker"] for x in _run_rows})
             with st.expander(
-                f"🔄 Repeating Stocks — {len(_repeat_data)} stock{'s' if len(_repeat_data) != 1 else ''} held in consecutive years",
+                f"🔄 Repeating Stocks — {_n_tickers} stock{'s' if _n_tickers != 1 else ''}, {len(_run_rows)} streak{'s' if len(_run_rows) != 1 else ''} across consecutive years",
                 expanded=True,
             ):
                 _rep_rows = ""
-                for _d in _repeat_data:
-                    _run_strs = ", ".join(
-                        " → ".join(str(y) for y in rr) for rr in _d["runs"]
-                    )
+                for _x in _run_rows:
+                    _run_str = " → ".join(str(y) for y in _x["run"])
                     _rep_rows += (
                         f"<tr>"
-                        f"<td style='padding:5px 14px;font-weight:600;'>{_d['ticker']}</td>"
-                        f"<td style='padding:5px 14px;color:#888;text-align:center;'>{_d['total']}</td>"
-                        f"<td style='padding:5px 14px;'>{_run_strs}</td>"
+                        f"<td style='padding:5px 14px;font-weight:600;'>{_x['ticker']}</td>"
+                        f"<td style='padding:5px 14px;color:#888;text-align:center;'>{len(_x['run'])}</td>"
+                        f"<td style='padding:5px 14px;'>{_run_str}</td>"
                         f"</tr>"
                     )
                 st.markdown(

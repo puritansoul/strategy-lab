@@ -238,6 +238,9 @@ def _saved_tip_html(s: dict) -> str:
         "equal_weight_nasdaq":   "QQQ Nasdaq",
     }
     lines = []
+    query = s.get("query", "")
+    if query:
+        lines.append(f"<b>Query:</b> <i>{query}</i>")
     if cfg:
         method = cfg.get("selection_method", "")
         n = cfg.get("n", 1)
@@ -302,7 +305,7 @@ with st.sidebar:
             _already = _i in st.session_state.get("_cmp_checked", [])
             _full_name = _s['name']
             _display_name = (_full_name[:24] + "…") if len(_full_name) > 24 else _full_name
-            _chk_col, _name_col, _del_col = st.columns([1, 5.5, 1.5])
+            _chk_col, _name_col, _copy_col, _rerun_col, _del_col = st.columns([1, 3.5, 1, 1, 1])
             if _chk_col.checkbox("", value=_already, key=f"cmp_chk_{_i}",
                                  label_visibility="collapsed"):
                 _checked_indices.append(_i)
@@ -317,6 +320,14 @@ with st.sidebar:
                 f"</div>",
                 unsafe_allow_html=True,
             )
+            _saved_query = _s.get("query", _s["name"])
+            with _copy_col.popover("📋", help="Copy query"):
+                st.markdown("**Query**")
+                st.code(_saved_query, language=None)
+            if _rerun_col.button("▶", key=f"sidebar_rerun_{_i}", help="Rerun with current settings"):
+                st.session_state["scenario_text"] = _saved_query
+                st.session_state["auto_run"] = True
+                st.rerun()
             if _del_col.button("✕", key=f"sidebar_del_{_i}", help=f"Delete: {_display_name}"):
                 _to_delete = _i
 
@@ -626,7 +637,7 @@ if _config is not None and _result is not None:
     _tax_suffix = f" · {int(config.get('tax_rate',0)*100)}% tax" if config.get("tax_rate", 0) > 0 else ""
     st.subheader(f"Results: _{config.get('display_name', '')}{_tax_suffix}_")
 
-    with st.expander("📋 What the AI understood — strategy explanation + real example", expanded=True):
+    with st.expander("📋 What the AI understood — strategy explanation + real example", expanded=False):
         _render_strategy_explanation(config, result, dm)
 
     # -- Compute summary stats --
@@ -698,6 +709,7 @@ if _config is not None and _result is not None:
     elif st.button("💾 Save this backtest", key=save_key):
         _new_entry = {
             "name":              config.get("display_name", ""),
+            "query":             scenario_input.strip(),
             "final":             final,
             "spy_final":         spy_final,
             "total_roi":         total_roi,

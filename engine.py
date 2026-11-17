@@ -515,6 +515,94 @@ def _dedup_tickers(ranked: list, n: int) -> list:
     return selected
 
 
+def _fifo_rebalance(
+    tax_lots: Dict[str, list],
+    selected: list,
+    buy_date: pd.Timestamp,
+    prices: Dict[str, float],
+    cash: float,
+    st_carryforward: float,
+    lt_carryforward: float,
+    st_rate: float,
+    lt_rate: float,
+) -> tuple:
+    """FIFO rebalance: sell dropped/excess tickers, net gains with IRS carryforwards, buy underweights.
+
+    All sells treated as long-term (user assumption: hold >= 1yr+1day before each rebalance).
+    Returns: (tax_lots, cash, new_st_cf, new_lt_cf, tax_paid, pre_rebalance_value)
+    """
+    pre_val = cash + sum(
+        sum(s * prices[tk] for s, _cb, _dt in lots)
+        for tk, lots in tax_lots.items()
+        if prices.get(tk, 0) > 0
+    )
+    selected_set = set(selected)
+    target = pre_val / len(selected_set) if selected_set else 0.0
+    lt_gains = 0.0
+
+    def _sell(lots, shares_to_sell, price):
+        nonlocal lt_gains, cash
+        remaining = []
+        for shares, cost_per_share, pdate in lots:
+            if shares_to_sell <= 1e-10:
+                remaining.append((shares, cost_per_share, pdate))
+                continue
+            sell = min(shares, shares_to_sell)
+            cash += sell * price
+            lt_gains += sell * (price - cost_per_share)
+            shares_to_sell -= sell
+            leftover = shares - sell
+            if leftover > 1e-10:
+                remaining.append((leftover, cost_per_share, pdate))
+        return remaining
+
+    # Sell fully-dropped tickers
+    for tk in list(tax_lots.keys()):
+        if tk not in selected_set:
+            price = prices.get(tk, 0.0)
+            if price > 0:
+                _sell(tax_lots.pop(tk), float("inf"), price)
+            else:
+                tax_lots.pop(tk)
+
+    # Partial sell of overweight retained tickers
+    for tk in list(tax_lots.keys()):
+        price = prices.get(tk, 0.0)
+        if price <= 0:
+            continue
+        cur_val = sum(s * price for s, _cb, _dt in tax_lots[tk])
+        if cur_val > target * 1.001:
+            tax_lots[tk] = _sell(tax_lots[tk], (cur_val - target) / price, price)
+
+    # IRS netting with carryforwards
+    net_st = st_carryforward          # ST bucket (unused when all gains are LT)
+    net_lt = lt_gains + lt_carryforward
+    if net_st < 0 and net_lt > 0:
+        offset = min(-net_st, net_lt)
+        net_lt -= offset
+        net_st += offset
+    elif net_lt < 0 and net_st > 0:
+        offset = min(-net_lt, net_st)
+        net_st -= offset
+        net_lt += offset
+
+    tax_paid = max(0.0, net_st) * st_rate + max(0.0, net_lt) * lt_rate
+    cash = max(0.0, cash - tax_paid)
+
+    # Buy underweight tickers
+    for tk in selected:
+        price = prices.get(tk, 0.0)
+        if price <= 0:
+            continue
+        cur_val = sum(s * price for s, _cb, _dt in tax_lots.get(tk, []))
+        buy_val = min(max(0.0, target - cur_val), cash)
+        if buy_val > 1e-6:
+            tax_lots.setdefault(tk, []).append((buy_val / price, price, buy_date))
+            cash -= buy_val
+
+    return tax_lots, cash, min(0.0, net_st), min(0.0, net_lt), tax_paid, pre_val
+
+
 _MAX_DATE = pd.Timestamp("2026-11-09")
 
 
@@ -635,6 +723,12 @@ def run_backtest(config: dict, dm: DataManager) -> dict:
     _no_tax_methods = {"hold_ticker", "equal_weight_sp500", "equal_weight_nasdaq"}
     tax_rate = float(config.get("tax_rate", 0.0))
     apply_tax = tax_rate > 0 and method not in _no_tax_methods
+    lt_rate_fifo = tax_rate   # config tax_rate treated as LT rate for FIFO engine
+    st_rate_fifo = 0.30       # ST rate; effectively unused — all gains assumed LT
+    _tax_lots: Dict[str, list] = {}  # {ticker: [(shares, cost_per_share, buy_date)]}
+    _cash = capital           # cash component of FIFO portfolio
+    _st_cf = 0.0              # ST loss carryforward
+    _lt_cf = 0.0              # LT loss carryforward
 
     # Default lookback: 6 months for momentum methods, 12 for everything else
     default_lb = 6 if method in ("top_n_momentum", "bottom_n_momentum") else 12
@@ -719,11 +813,42 @@ def run_backtest(config: dict, dm: DataManager) -> dict:
 
         avg_ret = float(np.mean([r for _, r in ticker_rets]))
         pre_tax_ret = avg_ret  # raw return before tax — stored for per-year tax drag column
-        # Apply tax drag: gains are taxed, losses are not (no tax-loss harvesting modelled)
-        if apply_tax and avg_ret > 0:
-            avg_ret = avg_ret * (1 - tax_rate)
-        start_val = portfolio_value
-        portfolio_value *= 1 + avg_ret
+
+        if apply_tax:
+            # FIFO lot tracking with IRS netting and partial rebalancing
+            all_needed = set(selected) | set(_tax_lots.keys())
+            prices_buy: Dict[str, float] = {}
+            for tk in all_needed:
+                p = dm.price_at(tk, buy_str)
+                if p:
+                    prices_buy[tk] = p
+
+            start_val = _cash + sum(
+                sum(s * prices_buy[tk] for s, _cb, _dt in _tax_lots[tk])
+                for tk in _tax_lots if tk in prices_buy
+            )
+
+            _tax_lots, _cash, _st_cf, _lt_cf, _tax_paid, _ = _fifo_rebalance(
+                _tax_lots, selected, buy_date, prices_buy, _cash,
+                _st_cf, _lt_cf, st_rate_fifo, lt_rate_fifo,
+            )
+
+            prices_sell: Dict[str, float] = {}
+            for tk in _tax_lots:
+                p = dm.price_at(tk, sell_str)
+                if p:
+                    prices_sell[tk] = p
+            end_val = _cash + sum(
+                sum(s * prices_sell[tk] for s, _cb, _dt in _tax_lots[tk])
+                for tk in _tax_lots if tk in prices_sell
+            )
+            avg_ret = (end_val - start_val) / start_val if start_val > 0 else 0.0
+            portfolio_value = end_val
+        else:
+            # Simple path: no FIFO tracking
+            start_val = portfolio_value
+            portfolio_value *= 1 + avg_ret
+            end_val = portfolio_value
 
         period_rows.append({
             **period,
@@ -732,7 +857,7 @@ def run_backtest(config: dict, dm: DataManager) -> dict:
             "period_return": avg_ret,
             "pre_tax_period_return": pre_tax_ret,
             "start_value": start_val,
-            "end_value": portfolio_value,
+            "end_value": end_val,
         })
 
     strategy_rows = _aggregate_to_annual(period_rows)

@@ -622,7 +622,7 @@ if _config is not None and _result is not None:
     _tax_suffix = f" · {int(config.get('tax_rate',0)*100)}% tax" if config.get("tax_rate", 0) > 0 else ""
     st.subheader(f"Results: _{config.get('display_name', '')}{_tax_suffix}_")
 
-    with st.expander("📋 What the AI understood — strategy explanation + real example", expanded=False):
+    with st.expander("📋 What the AI understood — strategy explanation + real example", expanded=True):
         _render_strategy_explanation(config, result, dm)
 
     # -- Compute summary stats --
@@ -882,9 +882,70 @@ if _config is not None and _result is not None:
     )
     st.markdown(html_table, unsafe_allow_html=True)
 
-    # -- Strategy config debug (expander) --
-    with st.expander("Strategy config (what the AI interpreted)"):
-        st.json({k: v for k, v in config.items() if not k.startswith("_")})
+    # -- Interpreted config panel --
+    with st.expander("🔍 Interpreted config — plain English + raw parameters", expanded=True):
+        _interp_src = config.get("_interpreter", "rule-based")
+        _src_label = {
+            "gemini": "Gemini AI", "openrouter": "OpenRouter AI",
+            "groq": "Groq AI", "anthropic": "Anthropic AI", "rule-based": "keyword matching",
+        }.get(_interp_src, _interp_src)
+
+        method    = config.get("selection_method", "")
+        n         = config.get("n", 1)
+        freq      = config.get("rebalance_frequency", "annual")
+        lb        = config.get("selection_lookback_months", 12)
+        offset    = config.get("buy_offset_months", 0)
+        hold      = config.get("hold_months")
+        filters   = config.get("filters", [])
+        tickers   = config.get("tickers", [])
+
+        _m = {
+            "top_n_prior_return":    f"Buy the top {n} performer{'s' if n>1 else ''} (best returns)",
+            "bottom_n_prior_return": f"Buy the bottom {n} performer{'s' if n>1 else ''} (worst returns / contrarian)",
+            "top_n_momentum":        f"Buy the top {n} momentum stock{'s' if n>1 else ''}",
+            "top_n_market_cap":      f"Buy the {n} largest companies by market cap",
+            "top_n_market_cap_growth": f"Buy the {n} companies with the biggest market cap growth",
+            "hold_ticker":           f"Hold {', '.join(tickers)} — no rotation",
+            "equal_weight_sp500":    "Hold the S&P 500 index (SPY) — equal weight",
+            "equal_weight_nasdaq":   "Hold the Nasdaq 100 index (QQQ) — equal weight",
+        }
+        _f = {
+            "annual": "Rebalance once per year",
+            "quarterly": "Rebalance every 3 months",
+            "monthly": "Rebalance every month",
+        }
+        _buy_month = ["January","February","March","April","May","June",
+                      "July","August","September","October","November","December"][offset % 12]
+
+        def _flt(f):
+            field, op, val = f.get("field",""), f.get("op",">"), float(f.get("value",0))
+            if field == "market_cap":
+                v = f"${val/1e12:.1f}T" if val>=1e12 else f"${val/1e9:.0f}B" if val>=1e9 else f"${val/1e6:.0f}M"
+                return f"Market cap {op} {v}"
+            if field == "prior_return":
+                return f"Prior-year return {op} {val*100:.0f}%"
+            if field == "price":
+                return f"Price {op} ${val:.0f}"
+            return f"{field} {op} {val}"
+
+        filter_lines = " · ".join(_flt(f) for f in filters) if filters else "None"
+        hold_line = f"{hold} months" if hold else "Until next rebalance"
+
+        plain = (
+            f"{_m.get(method, method)}. "
+            f"{_f.get(freq, freq)}. "
+            f"Measure performance over the prior {lb} month{'s' if lb!=1 else ''}. "
+            f"Buy in {_buy_month}. "
+            f"Hold: {hold_line}. "
+            f"Filters: {filter_lines}."
+        )
+
+        _cl, _cr = st.columns([3, 2])
+        with _cl:
+            st.markdown(f"**Interpreted by:** {_src_label}")
+            st.markdown(f"> {plain}")
+        with _cr:
+            st.json({k: v for k, v in config.items() if not k.startswith("_")}, expanded=False)
 
 # ---------------------------------------------------------------------------
 # Comparison popup — triggered by sidebar Compare button

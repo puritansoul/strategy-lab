@@ -495,29 +495,75 @@ def _call_openrouter(scenario: str, initial_capital: float, start_year: int) -> 
 def _call_gemini(scenario: str, initial_capital: float, start_year: int) -> dict:
     import requests as _req
     key = os.environ["GEMINI_API_KEY"]
-    user_msg = f"Scenario: {scenario}\nInitial capital: ${initial_capital:,.0f}\nStart year: {start_year}\n\nReply with raw JSON only."
-    payload = {
-        "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
-        "contents": [{"role": "user", "parts": [{"text": user_msg}]}],
-        "generationConfig": {"temperature": 0, "maxOutputTokens": 400},
-    }
-    r = _req.post(
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
-        params={"key": key},
-        json=payload,
-        timeout=20,
+    user_msg = (
+        f"Scenario: {scenario}\n"
+        f"Initial capital: ${initial_capital:,.0f}\n"
+        f"Start year: {start_year}\n\n"
+        "Reply with raw JSON only."
     )
-    if not r.ok:
-        raise Exception(f"Gemini HTTP {r.status_code}: {r.text[:200]}")
+    # Auth keys (AQ.xxx, issued after May 2026) require x-goog-api-key header.
+    # Standard keys (AIza...) also work with the header, so always use it.
+    headers = {"x-goog-api-key": key, "Content-Type": "application/json"}
+
+    errors = []
+
+    # ── Attempt 1: new interactions API (simpler, supports auth keys) ──────
     try:
-        raw = r.json()["candidates"][0]["content"]["parts"][0]["text"]
-    except (KeyError, IndexError, TypeError) as e:
-        raise Exception(f"Gemini malformed response: {e}")
-    raw = _extract_json(raw)
-    if not raw:
-        raise Exception("Gemini: no JSON in response")
-    simple = json.loads(raw)
-    return _compile(simple, initial_capital, start_year)
+        r = _req.post(
+            "https://generativelanguage.googleapis.com/v1beta/interactions",
+            headers={**headers, "Api-Revision": "2026-05-20"},
+            json={
+                "model": "gemini-2.0-flash",
+                "input": f"{SYSTEM_PROMPT}\n\n{user_msg}",
+            },
+            timeout=20,
+        )
+        if r.ok:
+            data = r.json()
+            raw = (
+                data.get("interaction", {}).get("outputText")
+                or data.get("outputText")
+                or ""
+            )
+            raw = _extract_json(raw)
+            if raw:
+                return _compile(json.loads(raw), initial_capital, start_year)
+            errors.append("interactions API: no JSON in response")
+        else:
+            errors.append(f"interactions API: HTTP {r.status_code} {r.text[:150]}")
+    except Exception as e:
+        errors.append(f"interactions API: {e}")
+
+    # ── Attempt 2: classic generateContent endpoint with header auth ────────
+    try:
+        r = _req.post(
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+            headers=headers,
+            json={
+                "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+                "contents": [{"role": "user", "parts": [{"text": user_msg}]}],
+                "generationConfig": {"temperature": 0, "maxOutputTokens": 400},
+            },
+            timeout=20,
+        )
+        if not r.ok:
+            errors.append(f"generateContent: HTTP {r.status_code} {r.text[:150]}")
+        else:
+            try:
+                raw = r.json()["candidates"][0]["content"]["parts"][0]["text"]
+            except (KeyError, IndexError, TypeError) as e:
+                errors.append(f"generateContent: malformed response ({e})")
+                raise Exception("; ".join(errors))
+            raw = _extract_json(raw)
+            if not raw:
+                errors.append("generateContent: no JSON in response")
+            else:
+                return _compile(json.loads(raw), initial_capital, start_year)
+    except Exception as e:
+        if "generateContent" not in str(e):
+            errors.append(f"generateContent: {e}")
+
+    raise Exception("; ".join(errors))
 
 
 def _call_groq(scenario: str, initial_capital: float, start_year: int) -> dict:

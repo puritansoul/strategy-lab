@@ -886,6 +886,66 @@ if _config is not None and _result is not None:
     )
     st.markdown(html_table, unsafe_allow_html=True)
 
+    # -- Consecutive repeats section --
+    _skip_repeat = {"hold_ticker", "equal_weight_sp500", "equal_weight_nasdaq"}
+    if config.get("selection_method") not in _skip_repeat and rows:
+        _ticker_years: dict = {}
+        for _r in rows:
+            for _tk in _r.get("tickers", []):
+                _ticker_years.setdefault(_tk, []).append(_r["year"])
+
+        def _consec_runs(yrs):
+            yrs = sorted(set(yrs))
+            runs, run = [], [yrs[0]]
+            for y in yrs[1:]:
+                if y == run[-1] + 1:
+                    run.append(y)
+                else:
+                    if len(run) >= 2:
+                        runs.append(run)
+                    run = [y]
+            if len(run) >= 2:
+                runs.append(run)
+            return runs
+
+        _repeat_data = []
+        for _tk, _yrs in _ticker_years.items():
+            _runs = _consec_runs(_yrs)
+            if _runs:
+                _repeat_data.append({
+                    "ticker": _tk,
+                    "total": sum(len(rr) for rr in _runs),
+                    "runs": _runs,
+                })
+        _repeat_data.sort(key=lambda x: x["total"], reverse=True)
+
+        if _repeat_data:
+            with st.expander(
+                f"🔄 Repeating Stocks — {len(_repeat_data)} stock{'s' if len(_repeat_data) != 1 else ''} held in consecutive years",
+                expanded=True,
+            ):
+                _rep_rows = ""
+                for _d in _repeat_data:
+                    _run_strs = ", ".join(
+                        " → ".join(str(y) for y in rr) for rr in _d["runs"]
+                    )
+                    _rep_rows += (
+                        f"<tr>"
+                        f"<td style='padding:5px 14px;font-weight:600;'>{_d['ticker']}</td>"
+                        f"<td style='padding:5px 14px;color:#888;text-align:center;'>{_d['total']}</td>"
+                        f"<td style='padding:5px 14px;'>{_run_strs}</td>"
+                        f"</tr>"
+                    )
+                st.markdown(
+                    "<table style='border-collapse:collapse;width:100%;font-size:0.9em;'>"
+                    "<thead><tr>"
+                    "<th style='padding:6px 14px;border-bottom:2px solid #ddd;'>Ticker</th>"
+                    "<th style='padding:6px 14px;border-bottom:2px solid #ddd;text-align:center;'>Yrs in streak</th>"
+                    "<th style='padding:6px 14px;border-bottom:2px solid #ddd;'>Consecutive sequences</th>"
+                    f"</tr></thead><tbody>{_rep_rows}</tbody></table>",
+                    unsafe_allow_html=True,
+                )
+
     # -- Interpreted config panel --
     with st.expander("🔍 Interpreted config — plain English + raw parameters", expanded=True):
         _interp_src = config.get("_interpreter", "rule-based")

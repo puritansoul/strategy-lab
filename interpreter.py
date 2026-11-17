@@ -491,17 +491,14 @@ def _call_gemini(scenario: str, initial_capital: float, start_year: int) -> dict
     # Standard keys (AIza...) also work with the header, so always use it.
     headers = {"x-goog-api-key": key, "Content-Type": "application/json"}
 
-    # Try models in priority order — skip to next on 503/429/timeout
-    _models = [
-        "gemini-2.5-flash",
-        "gemini-3.8-flash",
-        "gemini-2.0-flash",
-        "gemini-1.5-flash",
-    ]
+    # Only models available to new-user auth keys (others return 404).
+    # gemini-3.5-flash is the fallback per Google's own error message.
+    _models = ["gemini-3.8-flash", "gemini-3.5-flash"]
     errors = []
 
     for model in _models:
-        # ── interactions API (auth-key native, simpler format) ──────────────
+        # ── interactions API (auth-key native) ──────────────────────────────
+        _interactions_overloaded = False
         try:
             r = _req.post(
                 "https://generativelanguage.googleapis.com/v1beta/interactions",
@@ -511,9 +508,8 @@ def _call_gemini(scenario: str, initial_capital: float, start_year: int) -> dict
             )
             if r.status_code in (429, 503):
                 errors.append(f"{model}/interactions: {r.status_code} overloaded")
-                # skip both endpoints for this model — it's saturated
-                continue
-            if r.ok:
+                _interactions_overloaded = True
+            elif r.ok:
                 data = r.json()
                 raw = (
                     data.get("interaction", {}).get("outputText")
@@ -528,7 +524,7 @@ def _call_gemini(scenario: str, initial_capital: float, start_year: int) -> dict
         except Exception as e:
             errors.append(f"{model}/interactions: {e}")
 
-        # ── generateContent (classic endpoint, also supports auth keys) ─────
+        # ── generateContent (classic endpoint, always try even if interactions failed) ──
         try:
             r = _req.post(
                 f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
@@ -542,7 +538,7 @@ def _call_gemini(scenario: str, initial_capital: float, start_year: int) -> dict
             )
             if r.status_code in (429, 503):
                 errors.append(f"{model}/generateContent: {r.status_code} overloaded")
-                continue
+                continue  # both endpoints overloaded — try next model
             if not r.ok:
                 errors.append(f"{model}/generateContent: HTTP {r.status_code} {r.text[:100]}")
                 continue

@@ -491,63 +491,70 @@ def _call_gemini(scenario: str, initial_capital: float, start_year: int) -> dict
     # Standard keys (AIza...) also work with the header, so always use it.
     headers = {"x-goog-api-key": key, "Content-Type": "application/json"}
 
+    # Try models in priority order — skip to next on 503/429/timeout
+    _models = [
+        "gemini-2.5-flash",
+        "gemini-3.8-flash",
+        "gemini-2.0-flash",
+        "gemini-1.5-flash",
+    ]
     errors = []
 
-    # ── Attempt 1: new interactions API (simpler, supports auth keys) ──────
-    try:
-        r = _req.post(
-            "https://generativelanguage.googleapis.com/v1beta/interactions",
-            headers={**headers, "Api-Revision": "2026-05-20"},
-            json={
-                "model": "gemini-3.8-flash",
-                "input": f"{SYSTEM_PROMPT}\n\n{user_msg}",
-            },
-            timeout=20,
-        )
-        if r.ok:
-            data = r.json()
-            raw = (
-                data.get("interaction", {}).get("outputText")
-                or data.get("outputText")
-                or ""
+    for model in _models:
+        # ── interactions API (auth-key native, simpler format) ──────────────
+        try:
+            r = _req.post(
+                "https://generativelanguage.googleapis.com/v1beta/interactions",
+                headers={**headers, "Api-Revision": "2026-05-20"},
+                json={"model": model, "input": f"{SYSTEM_PROMPT}\n\n{user_msg}"},
+                timeout=12,
             )
+            if r.status_code in (429, 503):
+                errors.append(f"{model}/interactions: {r.status_code} overloaded")
+                # skip both endpoints for this model — it's saturated
+                continue
+            if r.ok:
+                data = r.json()
+                raw = (
+                    data.get("interaction", {}).get("outputText")
+                    or data.get("outputText") or ""
+                )
+                raw = _extract_json(raw)
+                if raw:
+                    return _compile(json.loads(raw), initial_capital, start_year)
+                errors.append(f"{model}/interactions: no JSON in response")
+            else:
+                errors.append(f"{model}/interactions: HTTP {r.status_code} {r.text[:100]}")
+        except Exception as e:
+            errors.append(f"{model}/interactions: {e}")
+
+        # ── generateContent (classic endpoint, also supports auth keys) ─────
+        try:
+            r = _req.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                headers=headers,
+                json={
+                    "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+                    "contents": [{"role": "user", "parts": [{"text": user_msg}]}],
+                    "generationConfig": {"temperature": 0, "maxOutputTokens": 400},
+                },
+                timeout=15,
+            )
+            if r.status_code in (429, 503):
+                errors.append(f"{model}/generateContent: {r.status_code} overloaded")
+                continue
+            if not r.ok:
+                errors.append(f"{model}/generateContent: HTTP {r.status_code} {r.text[:100]}")
+                continue
+            raw = r.json()["candidates"][0]["content"]["parts"][0]["text"]
             raw = _extract_json(raw)
             if raw:
                 return _compile(json.loads(raw), initial_capital, start_year)
-            errors.append("interactions API: no JSON in response")
-        else:
-            errors.append(f"interactions API: HTTP {r.status_code} {r.text[:150]}")
-    except Exception as e:
-        errors.append(f"interactions API: {e}")
-
-    # ── Attempt 2: classic generateContent endpoint with header auth ────────
-    try:
-        r = _req.post(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
-            headers=headers,
-            json={
-                "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
-                "contents": [{"role": "user", "parts": [{"text": user_msg}]}],
-                "generationConfig": {"temperature": 0, "maxOutputTokens": 400},
-            },
-            timeout=20,
-        )
-        if not r.ok:
-            errors.append(f"generateContent: HTTP {r.status_code} {r.text[:150]}")
-        else:
-            try:
-                raw = r.json()["candidates"][0]["content"]["parts"][0]["text"]
-            except (KeyError, IndexError, TypeError) as e:
-                errors.append(f"generateContent: malformed response ({e})")
-                raise Exception("; ".join(errors))
-            raw = _extract_json(raw)
-            if not raw:
-                errors.append("generateContent: no JSON in response")
-            else:
-                return _compile(json.loads(raw), initial_capital, start_year)
-    except Exception as e:
-        if "generateContent" not in str(e):
-            errors.append(f"generateContent: {e}")
+            errors.append(f"{model}/generateContent: no JSON in response")
+        except (KeyError, IndexError, TypeError) as e:
+            errors.append(f"{model}/generateContent: malformed response ({e})")
+        except Exception as e:
+            errors.append(f"{model}/generateContent: {e}")
 
     raise Exception("; ".join(errors))
 

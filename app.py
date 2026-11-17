@@ -282,20 +282,15 @@ with st.sidebar:
         st.subheader(f"Saved Backtests ({len(_saved)})")
         st.markdown("""<style>
         section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"]
-            { margin-bottom: -1rem; }
-        /* Allow tooltip to overflow sidebar bounds */
-        section[data-testid="stSidebar"],
-        section[data-testid="stSidebar"] > div,
-        section[data-testid="stSidebar"] > div > div { overflow: visible !important; }
+            { margin-bottom: -1.1rem; }
         .sl-tip-wrap { position: relative; display: inline-block; width: 100%; }
         .sl-tip-box {
             visibility: hidden; opacity: 0;
-            position: absolute; left: calc(100% + 10px); top: 0;
-            width: 230px; background: #1e1f2e; color: #dde;
+            position: absolute; left: 0; top: 100%; z-index: 9999;
+            width: 95%; background: #1e1f2e; color: #dde;
             font-size: 11.5px; line-height: 1.7; padding: 9px 13px;
             border-radius: 8px; box-shadow: 0 4px 18px rgba(0,0,0,.45);
-            z-index: 9999; pointer-events: none;
-            transition: opacity .15s ease;
+            pointer-events: none; transition: opacity .15s ease;
         }
         .sl-tip-wrap:hover .sl-tip-box { visibility: visible; opacity: 1; }
         </style>""", unsafe_allow_html=True)
@@ -357,14 +352,12 @@ with st.sidebar:
         st.divider()
 
     if len(st.session_state.get("saved_backtests", [])) > 1:
-        st.markdown("<div style='position:fixed;bottom:16px;left:0;width:var(--sidebar-width,21rem);padding:0 1rem;box-sizing:border-box;'>", unsafe_allow_html=True)
         if st.button("🗑 Clear all", key="sidebar_clear_all", use_container_width=True):
             delete_all_backtests()
             st.session_state["saved_backtests"] = []
             st.session_state["_cmp_checked"] = []
             st.session_state["_compare_indices"] = []
             st.rerun()
-        st.markdown("</div>", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # Data loading

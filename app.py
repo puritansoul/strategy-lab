@@ -13,7 +13,7 @@ import streamlit as st
 import streamlit.components.v1 as _components
 
 # Inject Streamlit Cloud secrets into environment variables
-for _key in ("OPENROUTER_API_KEY", "GROQ_API_KEY", "ANTHROPIC_API_KEY"):
+for _key in ("GEMINI_API_KEY", "OPENROUTER_API_KEY", "GROQ_API_KEY", "ANTHROPIC_API_KEY"):
     if _key not in os.environ:
         try:
             os.environ[_key] = st.secrets[_key]

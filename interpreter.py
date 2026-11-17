@@ -492,6 +492,34 @@ def _call_openrouter(scenario: str, initial_capital: float, start_year: int) -> 
     raise Exception("All models failed — " + "; ".join(errors[:5]))
 
 
+def _call_gemini(scenario: str, initial_capital: float, start_year: int) -> dict:
+    import requests as _req
+    key = os.environ["GEMINI_API_KEY"]
+    user_msg = f"Scenario: {scenario}\nInitial capital: ${initial_capital:,.0f}\nStart year: {start_year}\n\nReply with raw JSON only."
+    payload = {
+        "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},
+        "contents": [{"role": "user", "parts": [{"text": user_msg}]}],
+        "generationConfig": {"temperature": 0, "maxOutputTokens": 400},
+    }
+    r = _req.post(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+        params={"key": key},
+        json=payload,
+        timeout=20,
+    )
+    if not r.ok:
+        raise Exception(f"Gemini HTTP {r.status_code}: {r.text[:200]}")
+    try:
+        raw = r.json()["candidates"][0]["content"]["parts"][0]["text"]
+    except (KeyError, IndexError, TypeError) as e:
+        raise Exception(f"Gemini malformed response: {e}")
+    raw = _extract_json(raw)
+    if not raw:
+        raise Exception("Gemini: no JSON in response")
+    simple = json.loads(raw)
+    return _compile(simple, initial_capital, start_year)
+
+
 def _call_groq(scenario: str, initial_capital: float, start_year: int) -> dict:
     from groq import Groq
     client = Groq(api_key=os.environ["GROQ_API_KEY"])
@@ -779,7 +807,13 @@ def interpret(scenario: str, initial_capital: float = 10_000, start_year: int = 
     config = None
     error_msg = None
 
-    if os.environ.get("OPENROUTER_API_KEY"):
+    if os.environ.get("GEMINI_API_KEY"):
+        try:
+            config = _call_gemini(scenario, initial_capital, start_year)
+        except Exception as e:
+            error_msg = f"Gemini: {e}"
+
+    if config is None and os.environ.get("OPENROUTER_API_KEY"):
         try:
             config = _call_openrouter(scenario, initial_capital, start_year)
         except Exception as e:

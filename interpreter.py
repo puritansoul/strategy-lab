@@ -373,17 +373,6 @@ def _extract_json(text: str) -> str:
 _openrouter_free_models_cache = []
 _model_empty_strikes = {}
 
-# Best-known reliable free models on OpenRouter — tried first before dynamic list.
-# DeepSeek R1 is excellent at structured JSON (think-blocks are already stripped).
-# Llama 3.3 70B is the most consistent for instruction-following.
-_PREFERRED_FREE_MODELS = [
-    "deepseek/deepseek-r1:free",
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "microsoft/phi-4:free",
-    "qwen/qwq-32b:free",
-    "google/gemini-2.0-flash-thinking-exp:free",
-]
-
 
 def _parse_params_b(model_id: str) -> float:
     m = re.search(r'(\d+(?:\.\d+)?)\s*b(?:\b|_|-)', model_id.lower())
@@ -391,12 +380,10 @@ def _parse_params_b(model_id: str) -> float:
 
 
 def _get_free_models(key: str) -> list:
+    """Fetch current free models from OpenRouter — always live list, no stale hardcodes."""
     global _openrouter_free_models_cache
-    # Preferred models always tried first; fill remainder from dynamic list.
-    base = list(_PREFERRED_FREE_MODELS)
     if _openrouter_free_models_cache:
-        extras = [m for m in _openrouter_free_models_cache if m not in base]
-        return base + extras[:5]
+        return _openrouter_free_models_cache
     import requests as _req
     try:
         r = _req.get(
@@ -417,11 +404,10 @@ def _get_free_models(key: str) -> list:
             capable = [m for m in free if _parse_params_b(m["id"]) >= 3 or _parse_params_b(m["id"]) == 0]
             ranked = sorted(capable, key=lambda m: _parse_params_b(m["id"]), reverse=True)
             _openrouter_free_models_cache = [m["id"] for m in ranked[:10]]
-            extras = [m for m in _openrouter_free_models_cache if m not in base]
-            return base + extras[:5]
+            return _openrouter_free_models_cache
     except Exception:
         pass
-    return base
+    return []
 
 
 def _call_openrouter(scenario: str, initial_capital: float, start_year: int) -> dict:
@@ -513,7 +499,7 @@ def _call_gemini(scenario: str, initial_capital: float, start_year: int) -> dict
             "https://generativelanguage.googleapis.com/v1beta/interactions",
             headers={**headers, "Api-Revision": "2026-05-20"},
             json={
-                "model": "gemini-2.0-flash",
+                "model": "gemini-3.8-flash",
                 "input": f"{SYSTEM_PROMPT}\n\n{user_msg}",
             },
             timeout=20,
@@ -537,7 +523,7 @@ def _call_gemini(scenario: str, initial_capital: float, start_year: int) -> dict
     # ── Attempt 2: classic generateContent endpoint with header auth ────────
     try:
         r = _req.post(
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
             headers=headers,
             json={
                 "system_instruction": {"parts": [{"text": SYSTEM_PROMPT}]},

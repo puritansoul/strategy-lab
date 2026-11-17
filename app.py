@@ -305,7 +305,7 @@ with st.sidebar:
             _already = _i in st.session_state.get("_cmp_checked", [])
             _full_name = _s['name']
             _display_name = (_full_name[:24] + "…") if len(_full_name) > 24 else _full_name
-            _chk_col, _name_col, _copy_col, _rerun_col, _del_col = st.columns([1, 3.5, 1, 1, 1])
+            _chk_col, _name_col, _rerun_col, _del_col = st.columns([0.8, 4.8, 1, 1])
             if _chk_col.checkbox("", value=_already, key=f"cmp_chk_{_i}",
                                  label_visibility="collapsed"):
                 _checked_indices.append(_i)
@@ -321,15 +321,15 @@ with st.sidebar:
                 unsafe_allow_html=True,
             )
             _saved_query = _s.get("query", _s["name"])
-            with _copy_col.popover("📋", help="Copy query"):
-                st.markdown("**Query**")
-                st.code(_saved_query, language=None)
             if _rerun_col.button("▶", key=f"sidebar_rerun_{_i}", help="Rerun with current settings"):
                 st.session_state["scenario_text"] = _saved_query
                 st.session_state["auto_run"] = True
                 st.rerun()
             if _del_col.button("✕", key=f"sidebar_del_{_i}", help=f"Delete: {_display_name}"):
                 _to_delete = _i
+            # Query shown as selectable small text — readable and copyable
+            _q_short = _saved_query if len(_saved_query) <= 48 else _saved_query[:45] + "…"
+            st.caption(f"↳ _{_q_short}_")
 
         st.session_state["_cmp_checked"] = _checked_indices
 

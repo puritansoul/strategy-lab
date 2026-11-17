@@ -304,8 +304,10 @@ with st.sidebar:
         for _i, _s in enumerate(_saved):
             _already = _i in st.session_state.get("_cmp_checked", [])
             _full_name = _s['name']
-            _display_name = (_full_name[:24] + "…") if len(_full_name) > 24 else _full_name
-            _chk_col, _name_col, _rerun_col, _del_col = st.columns([0.8, 4.8, 1, 1])
+            _display_name = (_full_name[:32] + "…") if len(_full_name) > 32 else _full_name
+            _saved_query = _s.get("query", _s["name"])
+            _q_display = _saved_query if len(_saved_query) <= 44 else _saved_query[:41] + "…"
+            _chk_col, _name_col, _rerun_col, _del_col = st.columns([0.5, 3.8, 1.5, 1.5])
             if _chk_col.checkbox("", value=_already, key=f"cmp_chk_{_i}",
                                  label_visibility="collapsed"):
                 _checked_indices.append(_i)
@@ -315,21 +317,22 @@ with st.sidebar:
                 f"<span style='font-size:0.85em;font-weight:600;'>{_display_name}</span><br>"
                 f"<span style='font-size:0.75em;color:#888;'>"
                 f"${_s['final']:,.0f} · {_s['total_roi']*100:+.1f}% · "
-                f"{_s['years_beat']}/{_s['total_years']} yrs</span>"
+                f"{_s['years_beat']}/{_s['total_years']} yrs</span><br>"
+                f"<span style='font-size:0.7em;color:#aaa;font-style:italic;'>{_q_display}</span>"
                 f"<div class='sl-tip-box'>{_tip_html}</div>"
                 f"</div>",
                 unsafe_allow_html=True,
             )
-            _saved_query = _s.get("query", _s["name"])
-            if _rerun_col.button("▶", key=f"sidebar_rerun_{_i}", help="Rerun with current settings"):
+            if _rerun_col.button("▶", key=f"sidebar_rerun_{_i}",
+                                 help="Rerun with current settings",
+                                 use_container_width=True):
                 st.session_state["scenario_text"] = _saved_query
                 st.session_state["auto_run"] = True
                 st.rerun()
-            if _del_col.button("✕", key=f"sidebar_del_{_i}", help=f"Delete: {_display_name}"):
+            if _del_col.button("✕", key=f"sidebar_del_{_i}",
+                               help=f"Delete: {_display_name}",
+                               use_container_width=True):
                 _to_delete = _i
-            # Query shown as selectable small text — readable and copyable
-            _q_short = _saved_query if len(_saved_query) <= 48 else _saved_query[:45] + "…"
-            st.caption(f"↳ _{_q_short}_")
 
         st.session_state["_cmp_checked"] = _checked_indices
 

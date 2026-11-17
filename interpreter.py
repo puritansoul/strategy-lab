@@ -872,6 +872,9 @@ def interpret(scenario: str, initial_capital: float = 10_000, start_year: int = 
         config["_interpreter"] = "rule-based"
         if error_msg:
             config["_interpreter_error"] = error_msg.lstrip(" | ")
+    elif error_msg:
+        # A fallback LLM succeeded but an earlier one failed — surface the failure
+        config["_interpreter_error"] = error_msg.lstrip(" | ")
 
     # Enforce required fields
     config.setdefault("selection_method", "top_n_prior_return")

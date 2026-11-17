@@ -587,9 +587,13 @@ if run_clicked and scenario_input.strip():
         if _interp == "gemini":
             st.success("✅ Gemini AI interpreted this query", icon=None)
         elif _interp == "openrouter":
-            st.info("🤖 OpenRouter interpreted this query")
+            st.info("🤖 OpenRouter interpreted this query (Gemini unavailable)")
+            if _interp_err:
+                st.caption(f"⚠️ Gemini failed: {_interp_err}")
         elif _interp in ("groq", "anthropic"):
             st.info(f"🤖 {_interp.capitalize()} interpreted this query")
+            if _interp_err:
+                st.caption(f"⚠️ Earlier services failed: {_interp_err}")
         else:
             if _interp_err:
                 st.warning(f"🔤 Keyword fallback — AI failed: {_interp_err}")

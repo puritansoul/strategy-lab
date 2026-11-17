@@ -491,9 +491,8 @@ def _call_gemini(scenario: str, initial_capital: float, start_year: int) -> dict
     # Standard keys (AIza...) also work with the header, so always use it.
     headers = {"x-goog-api-key": key, "Content-Type": "application/json"}
 
-    # Only models available to new-user auth keys (others return 404).
-    # gemini-3.5-flash is the fallback per Google's own error message.
-    _models = ["gemini-3.8-flash", "gemini-3.5-flash"]
+    # 3.8-flash is chronically overloaded; 3.5-flash first, then lite variants.
+    _models = ["gemini-3.5-flash", "gemini-3.8-flash-lite", "gemini-3.8-flash"]
     errors = []
 
     for model in _models:

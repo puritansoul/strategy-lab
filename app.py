@@ -329,6 +329,10 @@ with st.sidebar:
             pointer-events: none; transition: opacity .15s ease;
         }
         .sl-tip-wrap:hover .sl-tip-box { visibility: visible; opacity: 1; }
+        section[data-testid="stSidebar"] .stButton button {
+            font-size: 0.75em; padding: 2px 4px; line-height: 1.2;
+            min-height: 0; height: auto;
+        }
         .sl-copy-btn {
             visibility: hidden; opacity: 0;
             background: none; border: none; cursor: pointer;
@@ -346,7 +350,7 @@ with st.sidebar:
             _display_name = (_full_name[:32] + "…") if len(_full_name) > 32 else _full_name
             _saved_query = _s.get("query", _s["name"])
             _q_display = _saved_query if len(_saved_query) <= 44 else _saved_query[:41] + "…"
-            _chk_col, _name_col, _rerun_col, _del_col = st.columns([0.5, 3.8, 1.5, 1.5])
+            _chk_col, _name_col, _rerun_col, _del_col = st.columns([0.5, 4.5, 1.0, 1.0])
             if _chk_col.checkbox("", value=_already, key=f"cmp_chk_{_i}",
                                  label_visibility="collapsed"):
                 _checked_indices.append(_i)

@@ -369,7 +369,7 @@ with st.sidebar:
                 st.session_state["scenario_text"] = _saved_query
                 st.session_state["auto_run"] = True
                 st.rerun()
-            if _del_col.button("✕", key=f"sidebar_del_{_i}",
+            if _del_col.button("🗑", key=f"sidebar_del_{_i}",
                                help=f"Delete: {_display_name}",
                                use_container_width=True):
                 _to_delete = _i

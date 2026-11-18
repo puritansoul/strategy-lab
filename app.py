@@ -158,8 +158,43 @@ st.set_page_config(
     page_title="Strategy Lab",
     page_icon="📈",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="collapsed",
 )
+
+# ---------------------------------------------------------------------------
+# Mobile-responsive CSS
+# ---------------------------------------------------------------------------
+st.markdown("""<style>
+@media screen and (max-width: 768px) {
+    /* Reduce page padding */
+    .main .block-container { padding-left: 0.75rem !important; padding-right: 0.75rem !important; }
+
+    /* Summary tiles: 2 per row */
+    .strat-tiles { flex-wrap: wrap !important; gap: 6px !important; }
+    .strat-tiles > div {
+        min-width: calc(50% - 3px) !important;
+        flex: 0 0 calc(50% - 3px) !important;
+        padding: 10px 10px !important;
+        font-size: 0.88em;
+    }
+
+    /* Year table: horizontal scroll + smaller text */
+    .strat-wrap { overflow-x: auto !important; -webkit-overflow-scrolling: touch; }
+    .strat-table { font-size: 0.78em !important; }
+    .strat-table td, .strat-table th { padding: 4px 7px !important; white-space: nowrap; }
+
+    /* Stack Streamlit columns (settings bar, strategy explanation) */
+    [data-testid="stHorizontalBlock"] > [data-testid="column"] {
+        min-width: 100% !important; flex: 0 0 100% !important;
+    }
+
+    /* Plotly chart height */
+    .js-plotly-plot .plotly { max-height: 300px; }
+
+    /* Form inputs: full width */
+    [data-testid="stTextInput"] input { font-size: 16px !important; }
+}
+</style>""", unsafe_allow_html=True)
 
 # ---------------------------------------------------------------------------
 # Compact horizontal settings bar (top of page, before title)
@@ -692,7 +727,7 @@ if _config is not None and _result is not None:
         _tile("📉", "S&amp;P Low",        f"${spy_min:,.0f}",   f"{(spy_min-init)/init*100:+.1f}% vs start",  spy_low_good),
     ])
     st.markdown(
-        f'<div style="display:flex;gap:8px;margin:20px 0 24px;">{tiles}</div>',
+        f'<div class="strat-tiles" style="display:flex;gap:8px;margin:20px 0 24px;">{tiles}</div>',
         unsafe_allow_html=True,
     )
 
@@ -872,7 +907,7 @@ if _config is not None and _result is not None:
     # that CommonMark would treat as blank lines and close the HTML block.
     html_table = (
         "<style>"
-        ".strat-wrap{max-height:70vh;overflow-y:auto;}"
+        ".strat-wrap{max-height:70vh;overflow-y:auto;overflow-x:auto;-webkit-overflow-scrolling:touch;}"
         ".strat-table{border-collapse:collapse;width:100%;font-size:0.93em;}"
         ".strat-table th{font-weight:600;padding:8px 12px;border-bottom:2px solid #ddd;text-align:left;"
         "position:sticky;top:0;background:#fff;z-index:1;box-shadow:0 1px 0 #ddd;}"

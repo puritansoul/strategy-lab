@@ -692,6 +692,16 @@ if run_clicked and scenario_input.strip():
             else:
                 st.caption("🔤 Interpreted via keyword matching — verify the strategy explanation below.")
 
+    # Auto-adjust start year for market cap queries (data starts 2008)
+    _mcap_methods = {"top_n_market_cap", "top_n_market_cap_growth"}
+    _uses_mcap = (
+        config.get("selection_method") in _mcap_methods
+        or any("market_cap" in str(f) for f in config.get("filters", []))
+    )
+    if _uses_mcap and config.get("start_year", start_year) < 2008:
+        config["start_year"] = 2008
+        st.info("📅 Start year adjusted to **2008** — market cap data is only available from 2008 onwards.", icon=None)
+
     with st.spinner("Running backtest…"):
         config["tax_rate"] = tax_rate
         result = run_backtest(config, dm)

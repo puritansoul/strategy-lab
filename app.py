@@ -318,8 +318,12 @@ with st.sidebar:
         st.subheader(f"Saved Backtests ({len(_saved)})")
         st.markdown("""<style>
         section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"]
-            { margin-bottom: -1.1rem; }
-        .sl-tip-wrap { position: relative; display: inline-block; width: 100%; }
+            { margin-bottom: 0; gap: 0.25rem; }
+        .sl-tip-wrap {
+            position: relative; display: inline-block; width: 100%;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid rgba(128,128,128,0.15);
+        }
         .sl-tip-box {
             visibility: hidden; opacity: 0;
             position: absolute; left: 0; top: 100%; z-index: 9999;
@@ -350,7 +354,7 @@ with st.sidebar:
             _display_name = (_full_name[:32] + "…") if len(_full_name) > 32 else _full_name
             _saved_query = _s.get("query", _s["name"])
             _q_display = _saved_query if len(_saved_query) <= 44 else _saved_query[:41] + "…"
-            _chk_col, _name_col, _rerun_col, _del_col = st.columns([0.5, 4.5, 1.0, 1.0])
+            _chk_col, _name_col, _rerun_col, _del_col = st.columns([0.5, 4.5, 1.0, 1.0], vertical_alignment="center")
             if _chk_col.checkbox("", value=_already, key=f"cmp_chk_{_i}",
                                  label_visibility="collapsed"):
                 _checked_indices.append(_i)

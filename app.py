@@ -355,12 +355,7 @@ with st.sidebar:
             _name_col.markdown(
                 f"<div class='sl-tip-wrap'>"
                 f"<span style='font-size:0.85em;font-weight:600;'>{_display_name}</span>"
-                f"<button class='sl-copy-btn' data-q=\"{_q_attr}\" "
-                f"onclick=\"var b=this,ta=document.createElement('textarea');"
-                f"ta.value=b.dataset.q;document.body.appendChild(ta);ta.select();"
-                f"document.execCommand('copy');document.body.removeChild(ta);"
-                f"b.textContent='✓';setTimeout(function(){{b.textContent='📋'}},1200)\" "
-                f"title='Copy query'>📋</button><br>"
+                f"<button class='sl-copy-btn' data-q=\"{_q_attr}\" title='Copy query'>📋</button><br>"
                 f"<span style='font-size:0.75em;color:#888;'>"
                 f"${_s['final']:,.0f} · {_s['total_roi']*100:+.1f}% · "
                 f"{_s['years_beat']}/{_s['total_years']} yrs</span>"
@@ -380,6 +375,38 @@ with st.sidebar:
                 _to_delete = _i
 
         st.session_state["_cmp_checked"] = _checked_indices
+
+        # Wire copy buttons via component iframe (onclick stripped from markdown HTML)
+        _components.html("""<script>
+(function(){
+  function wire(){
+    try{
+      var btns=window.parent.document.querySelectorAll('.sl-copy-btn:not([data-wired])');
+      btns.forEach(function(btn){
+        btn.setAttribute('data-wired','1');
+        btn.addEventListener('click',function(e){
+          e.preventDefault(); e.stopPropagation();
+          var q=btn.getAttribute('data-q');
+          var p=window.parent;
+          function fb(){
+            var ta=p.document.createElement('textarea');
+            ta.value=q; ta.style.cssText='position:fixed;top:-9999px;left:0;opacity:0;';
+            p.document.body.appendChild(ta); ta.focus(); ta.select();
+            p.document.execCommand('copy'); p.document.body.removeChild(ta);
+            btn.textContent='✓'; setTimeout(function(){btn.textContent='📋';},1200);
+          }
+          if(p.navigator&&p.navigator.clipboard){
+            p.navigator.clipboard.writeText(q).then(function(){
+              btn.textContent='✓'; setTimeout(function(){btn.textContent='📋';},1200);
+            }).catch(fb);
+          } else { fb(); }
+        });
+      });
+    }catch(err){}
+  }
+  wire(); setTimeout(wire,400); setTimeout(wire,1200);
+})();
+</script>""", height=0)
 
         if _to_delete is not None:
             _entry = st.session_state["saved_backtests"][_to_delete]

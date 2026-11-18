@@ -3,6 +3,7 @@ Strategy Lab — Natural-language S&P 500 backtester
 Run: streamlit run app.py
 """
 
+import html as _html
 import json
 import os
 
@@ -328,6 +329,14 @@ with st.sidebar:
             pointer-events: none; transition: opacity .15s ease;
         }
         .sl-tip-wrap:hover .sl-tip-box { visibility: visible; opacity: 1; }
+        .sl-copy-btn {
+            visibility: hidden; opacity: 0;
+            background: none; border: none; cursor: pointer;
+            font-size: 0.78em; padding: 0 3px; color: #888;
+            transition: opacity .15s ease; float: right; margin-top: 1px;
+        }
+        .sl-tip-wrap:hover .sl-copy-btn { visibility: visible; opacity: 1; }
+        .sl-copy-btn:hover { color: #7af; }
         </style>""", unsafe_allow_html=True)
         _to_delete = None
         _checked_indices = []
@@ -342,9 +351,14 @@ with st.sidebar:
                                  label_visibility="collapsed"):
                 _checked_indices.append(_i)
             _tip_html = _saved_tip_html(_s)
+            _q_attr = _html.escape(_saved_query, quote=True)
             _name_col.markdown(
                 f"<div class='sl-tip-wrap'>"
-                f"<span style='font-size:0.85em;font-weight:600;'>{_display_name}</span><br>"
+                f"<span style='font-size:0.85em;font-weight:600;'>{_display_name}</span>"
+                f"<button class='sl-copy-btn' data-q=\"{_q_attr}\" "
+                f"onclick=\"navigator.clipboard.writeText(this.dataset.q);"
+                f"var b=this;b.textContent='✓';setTimeout(function(){{b.textContent='📋'}},1200)\" "
+                f"title='Copy query'>📋</button><br>"
                 f"<span style='font-size:0.75em;color:#888;'>"
                 f"${_s['final']:,.0f} · {_s['total_roi']*100:+.1f}% · "
                 f"{_s['years_beat']}/{_s['total_years']} yrs</span><br>"

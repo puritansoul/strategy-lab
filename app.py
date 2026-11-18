@@ -356,13 +356,14 @@ with st.sidebar:
                 f"<div class='sl-tip-wrap'>"
                 f"<span style='font-size:0.85em;font-weight:600;'>{_display_name}</span>"
                 f"<button class='sl-copy-btn' data-q=\"{_q_attr}\" "
-                f"onclick=\"navigator.clipboard.writeText(this.dataset.q);"
-                f"var b=this;b.textContent='✓';setTimeout(function(){{b.textContent='📋'}},1200)\" "
+                f"onclick=\"var b=this,ta=document.createElement('textarea');"
+                f"ta.value=b.dataset.q;document.body.appendChild(ta);ta.select();"
+                f"document.execCommand('copy');document.body.removeChild(ta);"
+                f"b.textContent='✓';setTimeout(function(){{b.textContent='📋'}},1200)\" "
                 f"title='Copy query'>📋</button><br>"
                 f"<span style='font-size:0.75em;color:#888;'>"
                 f"${_s['final']:,.0f} · {_s['total_roi']*100:+.1f}% · "
-                f"{_s['years_beat']}/{_s['total_years']} yrs</span><br>"
-                f"<span style='font-size:0.7em;color:#aaa;font-style:italic;'>{_q_display}</span>"
+                f"{_s['years_beat']}/{_s['total_years']} yrs</span>"
                 f"<div class='sl-tip-box'>{_tip_html}</div>"
                 f"</div>",
                 unsafe_allow_html=True,

@@ -353,8 +353,8 @@ with st.sidebar:
             _full_name = _s['name']
             _display_name = (_full_name[:32] + "…") if len(_full_name) > 32 else _full_name
             _saved_query = _s.get("query", _s["name"])
-            _q_display = _saved_query if len(_saved_query) <= 44 else _saved_query[:41] + "…"
-            _chk_col, _name_col, _rerun_col, _del_col = st.columns([0.5, 4.5, 1.0, 1.0], vertical_alignment="center")
+            _liked = _s.get("liked", False)
+            _chk_col, _name_col, _star_col, _rerun_col, _del_col = st.columns([0.5, 4.2, 0.7, 1.0, 1.0], vertical_alignment="center")
             if _chk_col.checkbox("", value=_already, key=f"cmp_chk_{_i}",
                                  label_visibility="collapsed"):
                 _checked_indices.append(_i)
@@ -371,6 +371,12 @@ with st.sidebar:
                 f"</div>",
                 unsafe_allow_html=True,
             )
+            _star_label = "★" if _liked else "☆"
+            _star_help  = "Unlike" if _liked else "Like"
+            if _star_col.button(_star_label, key=f"sidebar_star_{_i}",
+                                help=_star_help, use_container_width=True):
+                st.session_state["saved_backtests"][_i]["liked"] = not _liked
+                st.rerun()
             if _rerun_col.button("▶", key=f"sidebar_rerun_{_i}",
                                  help="Rerun with current settings",
                                  use_container_width=True):

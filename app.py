@@ -718,9 +718,9 @@ if run_clicked and scenario_input.strip():
         config.get("selection_method") in _mcap_methods
         or any("market_cap" in str(f) for f in config.get("filters", []))
     )
-    if _uses_mcap and config.get("start_year", start_year) < 2008:
-        config["start_year"] = 2008
-        st.info("📅 Start year adjusted to **2008** — market cap data is only available from 2008 onwards.", icon=None)
+    if _uses_mcap and config.get("start_year", start_year) < 2012:
+        config["start_year"] = 2012
+        st.info("📅 Start year adjusted to **2012** — market cap data covers fewer than 70% of S&P 500 tickers before 2012, making earlier results unreliable.", icon=None)
 
     with st.spinner("Running backtest…"):
         config["tax_rate"] = tax_rate

@@ -334,8 +334,19 @@ with st.sidebar:
         }
         .sl-tip-wrap:hover .sl-tip-box { visibility: visible; opacity: 1; }
         section[data-testid="stSidebar"] .stButton button {
-            font-size: 0.75em; padding: 2px 4px; line-height: 1.2;
+            font-size: 0.75em; padding: 2px 3px; line-height: 1.2;
             min-height: 0; height: auto;
+        }
+        section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"]
+            > div:last-child .stButton button {
+            font-size: 0 !important; color: transparent !important;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23888'%3E%3Cpath d='M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat; background-position: center; background-size: 13px;
+            padding: 2px 10px !important;
+        }
+        section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"]
+            > div:last-child .stButton button:hover {
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23e05'%3E%3Cpath d='M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z'/%3E%3C/svg%3E");
         }
         .sl-copy-btn {
             visibility: hidden; opacity: 0;
@@ -354,7 +365,7 @@ with st.sidebar:
             _display_name = (_full_name[:32] + "…") if len(_full_name) > 32 else _full_name
             _saved_query = _s.get("query", _s["name"])
             _liked = _s.get("liked", False)
-            _chk_col, _name_col, _star_col, _rerun_col, _del_col = st.columns([0.5, 4.2, 0.7, 1.0, 1.0], vertical_alignment="center")
+            _chk_col, _name_col, _star_col, _rerun_col, _del_col = st.columns([0.5, 4.6, 0.6, 0.75, 0.65], vertical_alignment="center")
             if _chk_col.checkbox("", value=_already, key=f"cmp_chk_{_i}",
                                  label_visibility="collapsed"):
                 _checked_indices.append(_i)

@@ -1,72 +1,86 @@
 #!/usr/bin/env python3
 """
-backfill_market_caps.py  —  Fill 2001-2011 market cap gaps using FMP API.
+backfill_market_caps.py  —  Fill 2001-2011 market cap gaps using yfinance.
 
-Get a free key at: https://financialmodelingprep.com/developer/docs/
-Free tier limit: 250 requests/day.  Run once per day until complete (~3 days).
-Progress is saved to data/fmp_progress.json so each run resumes where it left off.
+No API key needed. Uses Yahoo Finance shares outstanding history × price.
+Progress saved to data/yf_progress.json — resume anytime if interrupted.
 
 Usage:
-    FMP_API_KEY=your_key_here python3 backfill_market_caps.py
-
-    # Test with one ticker first:
-    FMP_API_KEY=your_key python3 backfill_market_caps.py --test AAPL
+    python3 backfill_market_caps.py            # run (or resume) full backfill
+    python3 backfill_market_caps.py --test AAPL  # test one ticker first
 """
 
 import argparse
 import json
-import os
 import time
+import warnings
 from pathlib import Path
 
 import pandas as pd
-import requests
+import yfinance as yf
+
+warnings.filterwarnings("ignore")
 
 # ── Config ────────────────────────────────────────────────────────────────────
-DATA_DIR        = Path("data")
-PARQUET         = DATA_DIR / "market_caps.parquet"
-PROGRESS_FILE   = DATA_DIR / "fmp_progress.json"
-FILL_YEARS      = list(range(2001, 2012))   # 2001–2011 inclusive
-REQUESTS_PER_RUN = 240                       # stay under 250/day
-SLEEP_SEC       = 0.5                        # between requests
-FMP_BASE        = "https://financialmodelingprep.com/api/v3"
+DATA_DIR      = Path("data")
+PARQUET       = DATA_DIR / "market_caps.parquet"
+PROGRESS_FILE = DATA_DIR / "yf_progress.json"
+PRICES_FILE   = DATA_DIR / "prices.parquet"
+FILL_YEARS    = list(range(2001, 2012))   # 2001–2011 inclusive
+SLEEP_SEC     = 0.3                       # polite delay between tickers
 
-# ── FMP fetch ─────────────────────────────────────────────────────────────────
+# ── Core fetch ────────────────────────────────────────────────────────────────
 
-def fmp_market_caps(symbol: str, api_key: str) -> dict:
-    """Return {year: market_cap_at_jan1} for FILL_YEARS from FMP."""
-    url = (
-        f"{FMP_BASE}/historical-market-capitalization/{symbol}"
-        f"?from=2001-01-01&to=2012-06-01&limit=4000&apikey={api_key}"
-    )
+def yf_market_caps(symbol: str, prices_df: pd.DataFrame) -> dict:
+    """
+    Return {year: market_cap_at_jan1} for FILL_YEARS.
+    Market cap = shares_outstanding × closing_price on first trading day of year.
+    """
     try:
-        r = requests.get(url, timeout=20)
-        r.raise_for_status()
-        data = r.json()
+        tk = yf.Ticker(symbol)
+        shares_series = tk.get_shares_full(start="2000-01-01", end="2012-06-01")
     except Exception as e:
-        print(f"  ⚠  request error: {e}")
+        print(f"  ⚠  yfinance error: {e}")
         return {}
 
-    if not data or isinstance(data, dict):   # error response e.g. {"Error Message": ...}
-        msg = data.get("Error Message", "") if isinstance(data, dict) else ""
-        if msg:
-            print(f"  ⚠  FMP error: {msg}")
+    if shares_series is None or shares_series.empty:
         return {}
 
-    df = pd.DataFrame(data)
-    if df.empty or "date" not in df.columns or "marketCap" not in df.columns:
-        return {}
-
-    df["date"] = pd.to_datetime(df["date"])
-    df = df.sort_values("date").reset_index(drop=True)
+    shares_series = shares_series.sort_index()
 
     result = {}
     for year in FILL_YEARS:
         jan1 = pd.Timestamp(f"{year}-01-01")
-        # First trading day on or after Jan 1 within a 10-day window
-        window = df[(df["date"] >= jan1) & (df["date"] <= jan1 + pd.DateOffset(days=10))]
-        if not window.empty:
-            result[year] = float(window.iloc[0]["marketCap"])
+        jan10 = jan1 + pd.DateOffset(days=10)
+
+        # Get price: first trading day on/after Jan 1 from prices.parquet
+        price = None
+        if symbol in prices_df.columns:
+            price_slice = prices_df.loc[jan1:jan10, symbol].dropna()
+            if not price_slice.empty:
+                price = float(price_slice.iloc[0])
+
+        # Fallback: fetch price directly from yfinance
+        if price is None:
+            try:
+                hist = tk.history(start=jan1.date(), end=jan10.date(), auto_adjust=True)
+                if not hist.empty:
+                    price = float(hist["Close"].iloc[0])
+            except Exception:
+                pass
+
+        if price is None:
+            continue
+
+        # Get shares: last known value on or before Jan 1
+        past = shares_series[shares_series.index <= jan10]
+        if past.empty:
+            continue
+        shares = float(past.iloc[-1])
+
+        if shares >= 1_000_000:   # sanity: at least 1M shares
+            result[year] = price * shares
+
     return result
 
 # ── Progress helpers ──────────────────────────────────────────────────────────
@@ -80,35 +94,33 @@ def load_progress() -> dict:
 def save_progress(p: dict) -> None:
     PROGRESS_FILE.write_text(json.dumps(p, indent=2))
 
-# ── Merge + save parquet ──────────────────────────────────────────────────────
+# ── Merge into parquet ────────────────────────────────────────────────────────
 
 def merge_and_save(progress: dict) -> None:
     if not PARQUET.exists():
-        print("⚠  market_caps.parquet not found — nothing to merge into.")
+        print("⚠  market_caps.parquet not found.")
         return
 
     mc = pd.read_parquet(PARQUET)
 
-    # Build FMP dataframe: index=year, columns=tickers
-    fmp_rows: dict[int, dict] = {}
+    rows: dict[int, dict] = {}
     for ticker, year_caps in progress["data"].items():
         for yr_str, cap in year_caps.items():
             yr = int(yr_str)
-            fmp_rows.setdefault(yr, {})[ticker] = cap
+            rows.setdefault(yr, {})[ticker] = cap
 
-    if not fmp_rows:
-        print("No FMP data collected yet — nothing to merge.")
+    if not rows:
+        print("No data collected yet.")
         return
 
-    fmp_df = pd.DataFrame(fmp_rows).T.sort_index()
-    fmp_df.index = fmp_df.index.astype(int)
+    new_df = pd.DataFrame(rows).T.sort_index()
+    new_df.index = new_df.index.astype(int)
 
-    # For each FMP year/ticker, fill NaN cells in existing parquet (never overwrite existing data)
-    for year in fmp_df.index:
+    for year in new_df.index:
         if year not in mc.index:
             mc.loc[year] = pd.NA
-        for ticker in fmp_df.columns:
-            val = fmp_df.loc[year, ticker]
+        for ticker in new_df.columns:
+            val = new_df.loc[year, ticker]
             if pd.isna(val):
                 continue
             if ticker not in mc.columns:
@@ -118,9 +130,8 @@ def merge_and_save(progress: dict) -> None:
 
     mc = mc.sort_index()
     mc.to_parquet(PARQUET)
-    print(f"✅ Saved updated parquet ({PARQUET})")
+    print(f"✅ Saved {PARQUET}")
 
-    # Print coverage improvement
     coverage = mc.notna().sum(axis=1)
     print("\nCoverage after merge:")
     for y in sorted(mc.index):
@@ -131,22 +142,22 @@ def merge_and_save(progress: dict) -> None:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--test", metavar="TICKER", help="Test with a single ticker and exit")
+    parser.add_argument("--test", metavar="TICKER", help="Test one ticker and exit")
     args = parser.parse_args()
 
-    api_key = os.environ.get("FMP_API_KEY", "").strip()
-    if not api_key:
-        print("❌  Set FMP_API_KEY environment variable.")
-        print("    Get a free key at https://financialmodelingprep.com/developer/docs/")
-        return
+    # Load prices for fast local price lookups
+    prices_df = pd.read_parquet(PRICES_FILE) if PRICES_FILE.exists() else pd.DataFrame()
+    if not prices_df.empty:
+        prices_df.index = pd.to_datetime(prices_df.index)
+        prices_df = prices_df.sort_index()
 
-    # ── Test mode ────────────────────────────────────────────────────────────
+    # ── Test mode ─────────────────────────────────────────────────────────────
     if args.test:
         tk = args.test.upper()
-        print(f"Testing with {tk}...")
-        caps = fmp_market_caps(tk, api_key)
+        print(f"Testing {tk}...")
+        caps = yf_market_caps(tk, prices_df)
         if not caps:
-            print("No data returned. Check your API key and whether FMP covers this ticker.")
+            print("No data returned — ticker may not have shares history this far back.")
         else:
             print(f"Years found: {sorted(caps.keys())}")
             for yr, cap in sorted(caps.items()):
@@ -158,66 +169,50 @@ def main():
     comp_csv = DATA_DIR / "sp500_composition.csv"
     if comp_csv.exists():
         comp = pd.read_csv(comp_csv)
-        # tickers column might be comma-separated strings per row
         for val in comp.iloc[:, 1].dropna():
             tickers.update(str(val).split(","))
-
     if PARQUET.exists():
-        mc_cols = pd.read_parquet(PARQUET).columns.tolist()
-        tickers.update(mc_cols)
+        tickers.update(pd.read_parquet(PARQUET).columns.tolist())
 
-    # Clean up: drop blank/junk symbols
     tickers = sorted(t.strip() for t in tickers if t.strip() and "." not in t and len(t) <= 5)
-    print(f"Total unique tickers: {len(tickers)}")
+    print(f"Total tickers: {len(tickers)}")
 
     # ── Load progress ─────────────────────────────────────────────────────────
     progress = load_progress()
     remaining = [t for t in tickers if t not in progress["done"]]
     pct = 100 * len(progress["done"]) / len(tickers) if tickers else 0
-    print(f"Done: {len(progress['done'])} ({pct:.0f}%)  |  Remaining: {len(remaining)}")
-    print(f"This run will fetch up to {REQUESTS_PER_RUN} tickers.\n")
+    print(f"Done: {len(progress['done'])} ({pct:.0f}%)  |  Remaining: {len(remaining)}\n")
 
     if not remaining:
-        print("All tickers already fetched — merging into parquet.")
+        print("All tickers done — merging.")
         merge_and_save(progress)
         return
 
     # ── Fetch loop ────────────────────────────────────────────────────────────
-    fetched = 0
-    for ticker in remaining:
-        if fetched >= REQUESTS_PER_RUN:
-            print(f"\n⏸  Reached {REQUESTS_PER_RUN}-request limit for today.")
-            print("   Run the script again tomorrow to continue.")
-            break
-
+    for i, ticker in enumerate(remaining):
         label = f"[{len(progress['done'])+1}/{len(tickers)}]"
         print(f"  {label} {ticker} ...", end=" ", flush=True)
-        caps = fmp_market_caps(ticker, api_key)
+
+        caps = yf_market_caps(ticker, prices_df)
         yrs  = sorted(caps.keys())
-        if yrs:
-            print(f"{len(yrs)} years ({yrs[0]}–{yrs[-1]})")
-        else:
-            print("no historical data")
+        print(f"{len(yrs)} years ({yrs[0]}–{yrs[-1]})" if yrs else "no data")
 
         progress["done"].append(ticker)
         if caps:
             progress["data"][ticker] = {str(y): v for y, v in caps.items()}
 
-        fetched += 1
-        save_progress(progress)
+        # Save + merge every 50 tickers
+        if (i + 1) % 50 == 0:
+            save_progress(progress)
+            merge_and_save(progress)
+            print(f"  — checkpoint saved ({i+1} tickers this run)\n")
+
         time.sleep(SLEEP_SEC)
 
-    # ── Always merge what we have so far ─────────────────────────────────────
-    print(f"\nMerging {len(progress['data'])} tickers into parquet...")
+    save_progress(progress)
     merge_and_save(progress)
-
-    if remaining[fetched:]:
-        days_left = -(-len(remaining[fetched:]) // REQUESTS_PER_RUN)   # ceiling div
-        print(f"\n~{days_left} more day(s) of runs needed to complete all tickers.")
-    else:
-        print("\n🎉 All tickers fetched and merged!")
-        PROGRESS_FILE.unlink(missing_ok=True)
-        print("Progress file cleaned up.")
+    print("\n🎉 All tickers fetched and merged!")
+    PROGRESS_FILE.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

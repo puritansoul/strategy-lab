@@ -98,6 +98,22 @@ def save_backtest(backtest: dict) -> Optional[str]:
     return None
 
 
+def update_backtest(backtest_id: str, backtest: dict) -> None:
+    """Patch an existing backtest's data payload (e.g. toggling liked)."""
+    url, key = _config()
+    if not url or not key:
+        return
+    try:
+        requests.patch(
+            f"{url}/rest/v1/saved_backtests?id=eq.{backtest_id}",
+            headers={**_headers(key), "Prefer": "return=minimal"},
+            json={"data": _serialize(backtest)},
+            timeout=10,
+        )
+    except Exception:
+        pass
+
+
 def delete_backtest(backtest_id: str) -> None:
     url, key = _config()
     if not url or not key:

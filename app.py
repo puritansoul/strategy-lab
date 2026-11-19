@@ -24,7 +24,7 @@ for _key in ("GEMINI_API_KEY", "OPENROUTER_API_KEY", "GROQ_API_KEY", "ANTHROPIC_
 from engine import DataManager, run_backtest
 from interpreter import interpret
 from persistence import (
-    load_backtests, save_backtest, delete_backtest, delete_all_backtests,
+    load_backtests, save_backtest, update_backtest, delete_backtest, delete_all_backtests,
     load_search_history, save_search_history,
 )
 
@@ -376,6 +376,9 @@ with st.sidebar:
             if _star_col.button(_star_label, key=f"sidebar_star_{_i}",
                                 help=_star_help, use_container_width=True):
                 st.session_state["saved_backtests"][_i]["liked"] = not _liked
+                _entry = st.session_state["saved_backtests"][_i]
+                if "_id" in _entry:
+                    update_backtest(_entry["_id"], _entry)
                 st.rerun()
             if _rerun_col.button("▶", key=f"sidebar_rerun_{_i}",
                                  help="Rerun with current settings",
